@@ -1,6 +1,7 @@
 package mapsforge
 
 import (
+	"encoding/binary"
 	"io"
 )
 
@@ -24,22 +25,20 @@ func (r *raw_reader) VbeU() uint32 {
 
 	var v uint32
 	var shift uint
-	for {
-		b := r.uint8()
+	for i, b := range r.buf {
 		v |= uint32(b&0x7f) << shift
 		shift += 7
 		if b&0x80 == 0 {
-			break
+			r.buf = r.buf[i+1:]
+			return v
 		}
 		if shift > 32 {
 			r.err = overflow
 			return 0
 		}
 	}
-	if r.err != nil {
-		return 0
-	}
-	return v
+	r.err = io.EOF
+	return 0
 }
 
 // read VBE-S int
@@ -52,32 +51,28 @@ func (r *raw_reader) VbeS() int32 {
 	var shift uint
 	var sign bool
 
-	for i := 0; ; i++ {
-		b := r.uint8()
-
+	for i, b := range r.buf {
 		if b&0x80 == 0 {
 			// last byte
 			v |= int32(b&0x3f) << shift
 			sign = b&0x40 != 0
-			break
-		} else {
-			v |= int32(b&0x7f) << shift
-			shift += 7
+			r.buf = r.buf[i+1:]
+
+			if sign {
+				v = -v
+			}
+			return v
 		}
+		v |= int32(b&0x7f) << shift
+		shift += 7
+
 		if shift > 32 {
 			r.err = overflow
 			return 0
 		}
 	}
-	if r.err != nil {
-		return 0
-	}
-
-	if sign {
-		v = -v
-	}
-
-	return v
+	r.err = io.EOF
+	return 0
 }
 
 // read variable length string
@@ -123,11 +118,13 @@ func (r *raw_reader) uint16() uint16 {
 	if r.err != nil {
 		return 0
 	}
-
-	v := uint16(r.uint8())<<8 | uint16(r.uint8())
-	if r.err != nil {
+	if len(r.buf) < 2 {
+		r.err = io.EOF
 		return 0
 	}
+
+	v := binary.BigEndian.Uint16(r.buf)
+	r.buf = r.buf[2:]
 	return v
 }
 
@@ -135,11 +132,13 @@ func (r *raw_reader) uint32() uint32 {
 	if r.err != nil {
 		return 0
 	}
-
-	v := uint32(r.uint16())<<16 | uint32(r.uint16())
-	if r.err != nil {
+	if len(r.buf) < 4 {
+		r.err = io.EOF
 		return 0
 	}
+
+	v := binary.BigEndian.Uint32(r.buf)
+	r.buf = r.buf[4:]
 	return v
 }
 
@@ -151,10 +150,12 @@ func (r *raw_reader) uint64() uint64 {
 	if r.err != nil {
 		return 0
 	}
-
-	v := uint64(r.uint32())<<32 | uint64(r.uint32())
-	if r.err != nil {
+	if len(r.buf) < 8 {
+		r.err = io.EOF
 		return 0
 	}
+
+	v := binary.BigEndian.Uint64(r.buf)
+	r.buf = r.buf[8:]
 	return v
 }
