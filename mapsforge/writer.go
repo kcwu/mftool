@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"sync"
 )
 
 type raw_writer struct {
@@ -216,9 +217,18 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 	return nil
 }
 
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
-	var buf bytes.Buffer
-	rw := newRawWriter(&buf)
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufferPool.Put(buf)
+
+	rw := newRawWriter(buf)
 
 	// In the specification, first_way_offset is relative to the byte AFTER itself.
 	// But we need to write the zoom table first.
@@ -234,16 +244,22 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 	// Placeholder for VBE-U (max 5 bytes, let's just use a large enough temporary buffer or calculate it)
 	// Actually, let's write POIs to a separate buffer first.
 
-	var poiBuf bytes.Buffer
-	poiWriter := newRawWriter(&poiBuf)
+	poiBuf := bufferPool.Get().(*bytes.Buffer)
+	poiBuf.Reset()
+	defer bufferPool.Put(poiBuf)
+
+	poiWriter := newRawWriter(poiBuf)
 	for zi := 0; zi < zooms; zi++ {
 		for _, poi := range td.poi_data[zi] {
 			mw.writePOIData(poiWriter, &poi)
 		}
 	}
 
-	var wayBuf bytes.Buffer
-	wayWriter := newRawWriter(&wayBuf)
+	wayBuf := bufferPool.Get().(*bytes.Buffer)
+	wayBuf.Reset()
+	defer bufferPool.Put(wayBuf)
+
+	wayWriter := newRawWriter(wayBuf)
 	for zi := 0; zi < zooms; zi++ {
 		for _, way := range td.way_data[zi] {
 			mw.writeWayProperties(wayWriter, &way)
@@ -255,7 +271,10 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 	buf.Write(poiBuf.Bytes())
 	buf.Write(wayBuf.Bytes())
 
-	return buf.Bytes(), nil
+	// Return a copy of bytes because buffer is reused
+	res := make([]byte, buf.Len())
+	copy(res, buf.Bytes())
+	return res, nil
 }
 
 func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
@@ -294,8 +313,11 @@ func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
 func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties) {
 	// We need to calculate way_data_size which excludes signature and way_data_size itself.
 	// Let's write way data to a buffer first.
-	var buf bytes.Buffer
-	ww := newRawWriter(&buf)
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufferPool.Put(buf)
+
+	ww := newRawWriter(buf)
 
 	ww.uint16(wp.sub_tile_bitmap)
 	special := uint8(wp.layer+5)<<4 | uint8(len(wp.tag_id)&0xf)

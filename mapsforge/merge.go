@@ -1,6 +1,7 @@
 package mapsforge
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -116,6 +117,10 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		// We use a lookahead buffer to keep write order sequential
 		resultQueue := make([]chan tileResult, 0, concurrency*2)
 
+		bw := bufio.NewWriterSize(f, 4*1024*1024)
+		startTileDataPos, _ := f.Seek(0, io.SeekCurrent)
+		var currentBytesWritten uint64
+
 		for ty := y; ty <= Y; ty++ {
 			for tx := x; tx <= X; tx++ {
 				idx := (tx - x) + len_x*(ty-y)
@@ -152,13 +157,16 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 						return res.err
 					}
 
-					tilePos, _ := f.Seek(0, io.SeekCurrent)
-					relativeOffset := uint64(tilePos) - zic.pos
+					relativeOffset := (uint64(startTileDataPos) - zic.pos) + currentBytesWritten
 					indexEntries[res.idx].Offset = relativeOffset
 					indexEntries[res.idx].IsWater = res.isWater
 
 					if res.hasData {
-						f.Write(res.data)
+						n, err := bw.Write(res.data)
+						if err != nil {
+							return err
+						}
+						currentBytesWritten += uint64(n)
 					}
 				}
 			}
@@ -171,14 +179,22 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 				return res.err
 			}
 
-			tilePos, _ := f.Seek(0, io.SeekCurrent)
-			relativeOffset := uint64(tilePos) - zic.pos
+			relativeOffset := (uint64(startTileDataPos) - zic.pos) + currentBytesWritten
 			indexEntries[res.idx].Offset = relativeOffset
 			indexEntries[res.idx].IsWater = res.isWater
 
 			if res.hasData {
-				f.Write(res.data)
+				n, err := bw.Write(res.data)
+				if err != nil {
+					return err
+				}
+				currentBytesWritten += uint64(n)
 			}
+		}
+
+		err = bw.Flush()
+		if err != nil {
+			return err
 		}
 
 		endPos, _ := f.Seek(0, io.SeekCurrent)
