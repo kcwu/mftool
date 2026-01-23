@@ -160,7 +160,7 @@ func (mp *MapsforgeParser) ParseRest() error {
 	for si, sf := range mp.data.subfiles {
 		for x := sf.x; x <= sf.X; x++ {
 			for y := sf.y; y <= sf.Y; y++ {
-				_, err := mp.getTileData(si, x, y)
+				_, err := mp.GetTileData(si, x, y)
 				if err != nil {
 					return err
 				}
@@ -197,13 +197,13 @@ func (mp *MapsforgeParser) parseSubFilePartial(r *raw_reader, h *Header, sf *Sub
 		b0 := r.uint8()
 		b1234 := r.uint32()
 		sf.tile_indexes[i] = TileIndexEntry{
-			is_water: b0&0x80 != 0,
-			offset:   uint64(b0&0x7f)<<32 | uint64(b1234),
+			IsWater: b0&0x80 != 0,
+			Offset:   uint64(b0&0x7f)<<32 | uint64(b1234),
 		}
 	}
 
 	// sential
-	sf.tile_indexes[len_x*len_y] = TileIndexEntry{offset: zic.size}
+	sf.tile_indexes[len_x*len_y] = TileIndexEntry{Offset: zic.size}
 
 	if r.err != nil {
 		return r.err
@@ -214,7 +214,7 @@ func (mp *MapsforgeParser) parseSubFilePartial(r *raw_reader, h *Header, sf *Sub
 	return nil
 }
 
-func (mp *MapsforgeParser) getTileData(si, x, y int) (*TileData, error) {
+func (mp *MapsforgeParser) GetTileData(si, x, y int) (*TileData, error) {
 	if !(0 <= si && si < len(mp.data.subfiles)) {
 		return nil, errors.New("bad subfile index")
 	}
@@ -229,10 +229,10 @@ func (mp *MapsforgeParser) getTileData(si, x, y int) (*TileData, error) {
 	if sf.tile_data[i] == nil {
 		td := &TileData{}
 
-		if sf.tile_indexes[i].offset != sf.tile_indexes[i+1].offset {
+		if sf.tile_indexes[i].Offset != sf.tile_indexes[i+1].Offset {
 			sf_base := sf.zoom_interval.pos
-			b := sf_base + sf.tile_indexes[i].offset
-			e := sf_base + sf.tile_indexes[i+1].offset
+			b := sf_base + sf.tile_indexes[i].Offset
+			e := sf_base + sf.tile_indexes[i+1].Offset
 			tdp := newTileDataParser(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
 			var err error
 			td, err = tdp.parse()
@@ -273,7 +273,7 @@ func (mp *MapsforgeParser) getTiles() (result []Tile) {
 			y := ti / len_x
 			if td == nil {
 				var err error
-				td, err = mp.getTileData(si, x, y)
+				td, err = mp.GetTileData(si, x, y)
 				if err != nil {
 					continue
 				}
@@ -294,7 +294,7 @@ func (mp *MapsforgeParser) getTiles() (result []Tile) {
 	return
 }
 
-func parseFile(fn string, all bool) (*MapsforgeParser, error) {
+func ParseFile(fn string, all bool) (*MapsforgeParser, error) {
 	f, err := os.Open(fn)
 	if err != nil {
 		return nil, err
@@ -315,10 +315,27 @@ func parseFile(fn string, all bool) (*MapsforgeParser, error) {
 	return p, nil
 }
 
+func (sf *SubFile) TileIndex(x, y int) int {
+	len_x := sf.X - sf.x + 1
+	return (x - sf.x) + len_x*(y-sf.y)
+}
+
 func CmdParse(args []string) error {
-	_, err := parseFile(args[0], true)
+	_, err := ParseFile(args[0], true)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+func (p *MapsforgeParser) GetTileIndex(si, x, y int) *TileIndexEntry {
+	if si < 0 || si >= len(p.data.subfiles) {
+		return nil
+	}
+	sf := &p.data.subfiles[si]
+	if x < sf.x || x > sf.X || y < sf.y || y > sf.Y {
+		return nil
+	}
+	len_x := sf.X - sf.x + 1
+	i := (x - sf.x) + len_x*(y-sf.y)
+	return &sf.tile_indexes[i]
 }

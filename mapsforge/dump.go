@@ -4,11 +4,6 @@ import (
 	"fmt"
 )
 
-func (pos *LatLon) ToString() string {
-	return fmt.Sprintf("(%f,%f)",
-		float64(pos.lat)/1e6,
-		float64(pos.lon)/1e6)
-}
 
 func (d *MapsforgeData) dump_header() {
 	h := d.header
@@ -99,7 +94,7 @@ func (td *TileData) dump(header *Header) {
 	for zi := 0; zi < len(td.tile_header.zoom_table); zi++ {
 		fmt.Println("zi:", zi)
 		for wi, way := range td.way_data[zi] {
-			fmt.Printf("way[zi=%d,%d] layer=%d", zi, wi, way.layer)
+			fmt.Printf("way[zi=%d,%d] layer=%d sub_tile_bitmap=%04x", zi, wi, way.layer, way.sub_tile_bitmap)
 			for _, tag := range way.tag_id {
 				fmt.Printf(" %d(%s)", tag, header.way_tags[tag])
 			}
@@ -126,6 +121,15 @@ func (td *TileData) dump(header *Header) {
 			}
 			fmt.Println()
 
+			for bi, block := range way.block {
+				for segment_idx, segment := range block.data {
+					fmt.Printf("  block[%d] segment[%d]:", bi, segment_idx)
+					for _, node := range segment {
+						fmt.Printf(" %s", node.ToString())
+					}
+					fmt.Println()
+				}
+			}
 		}
 	}
 
@@ -135,10 +139,10 @@ func (sf *SubFile) dump_indexes() {
 	fmt.Println("indexes:", len(sf.tile_indexes))
 	for i := 0; i < len(sf.tile_indexes)-1; i++ {
 		v := sf.tile_indexes[i]
-		if v.is_water {
-			fmt.Printf("[%d]%d,%d\n", i, 1, v.offset)
+		if v.IsWater {
+			fmt.Printf("[%d]%d,%d\n", i, 1, v.Offset)
 		} else {
-			fmt.Printf("[%d]%d,%d\n", i, 0, v.offset)
+			fmt.Printf("[%d]%d,%d\n", i, 0, v.Offset)
 		}
 	}
 	fmt.Println()
@@ -147,7 +151,7 @@ func (sf *SubFile) dump_indexes() {
 func CmdDump(args []string, flagHeader bool, flagAll bool, flagTile string) error {
 	fn := args[0]
 
-	p, err := parseFile(fn, false)
+	p, err := ParseFile(fn, false)
 	if err != nil {
 		return err
 	}
@@ -159,7 +163,7 @@ func CmdDump(args []string, flagHeader bool, flagAll bool, flagTile string) erro
 		for si, sf := range p.data.subfiles {
 			for x := sf.x; x <= sf.X; x++ {
 				for y := sf.y; y <= sf.Y; y++ {
-					td, err := p.getTileData(si, x, y)
+					td, err := p.GetTileData(si, x, y)
 					if err != nil {
 						return err
 					}
@@ -180,7 +184,7 @@ func CmdDump(args []string, flagHeader bool, flagAll bool, flagTile string) erro
 			return err
 		}
 
-		td, err := p.getTileData(si, x, y)
+		td, err := p.GetTileData(si, x, y)
 		if err != nil {
 			return err
 		}

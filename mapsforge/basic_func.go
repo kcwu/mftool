@@ -21,14 +21,18 @@ func min(a, b int) int {
 }
 
 func (a LatLon) less(b LatLon) bool {
-	if a.lat != b.lat {
-		return a.lat < b.lat
+	if a.lon != b.lon {
+		return a.lon < b.lon
 	}
-	return a.lon < b.lon
+	return a.lat < b.lat
 }
 
 func (a LatLon) eq(b LatLon) bool {
 	return !a.less(b) && !b.less(a)
+}
+
+func (a LatLon) ToString() string {
+	return fmt.Sprintf("(%f,%f)", float64(a.lat)/1e6, float64(a.lon)/1e6)
 }
 
 func (pos *LatLon) ToXY(zoom uint8) (int, int) {
@@ -59,11 +63,11 @@ func zic_eq(zi1, zi2 []ZoomIntervalConfig) bool {
 }
 
 func (a *POIData) less(b *POIData) bool {
-	if a.LatLon != b.LatLon {
-		return a.LatLon.less(b.LatLon)
-	}
 	if a.layer != b.layer {
 		return a.layer < b.layer
+	}
+	if a.LatLon != b.LatLon {
+		return a.LatLon.less(b.LatLon)
 	}
 	if len(a.tag_id) != len(b.tag_id) {
 		return len(a.tag_id) < len(b.tag_id)
@@ -95,7 +99,7 @@ func (a *POIData) less(b *POIData) bool {
 }
 
 func (a *POIData) eq(b *POIData) bool {
-	return !a.less(b) && b.less(a)
+	return !a.less(b) && !b.less(a)
 }
 
 func (p *POIData) ToString(stat *TagsStat) string {
@@ -152,11 +156,19 @@ func (w *WayProperties) ToString(stat *TagsStat) string {
 
 func (a *WayProperties) less(b *WayProperties) bool {
 	if a.layer != b.layer {
-		// XXX
 		return a.layer < b.layer
+	}
+	if len(a.block) != len(b.block) {
+		return len(a.block) < len(b.block)
 	}
 	if len(a.tag_id) != len(b.tag_id) {
 		return len(a.tag_id) < len(b.tag_id)
+	}
+	if a.has_label_position != b.has_label_position {
+		return b.has_label_position
+	}
+	if a.has_label_position && !a.label_position.eq(b.label_position) {
+		return a.label_position.less(b.label_position)
 	}
 	for i := range a.tag_id {
 		if a.tag_id[i] != b.tag_id[i] {
