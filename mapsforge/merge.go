@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -78,6 +79,13 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		return err
 	}
 
+	concurrency := runtime.NumCPU()
+	jobs := make(chan tileJob, concurrency*2)
+	defer close(jobs)
+	for i := 0; i < concurrency; i++ {
+		go mergeWorker(jobs, ps, &outHeader, poiMapping, wayMapping, mw)
+	}
+
 	for si := 0; si < len(outHeader.zoom_interval); si++ {
 		zic := &outHeader.zoom_interval[si]
 		baseZoom := zic.base_zoom_level
@@ -105,97 +113,71 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		}
 
 		// Write Tile Data
+		// We use a lookahead buffer to keep write order sequential
+		resultQueue := make([]chan tileResult, 0, concurrency*2)
+
 		for ty := y; ty <= Y; ty++ {
 			for tx := x; tx <= X; tx++ {
-				tilePos, _ := f.Seek(0, io.SeekCurrent)
-				relativeOffset := uint64(tilePos) - zic.pos
 				idx := (tx - x) + len_x*(ty-y)
-				indexEntries[idx].Offset = relativeOffset
 
+				resCh := make(chan tileResult, 1)
+				resultQueue = append(resultQueue, resCh)
+
+				shouldProcess := true
 				if flagTile != "" {
 					if si != targetSi || tx != targetX || ty != targetY {
-						continue
+						shouldProcess = false
 					}
 				}
 
-				combinedTd := &TileData{}
-				zooms := int(zic.max_zoom_level-zic.min_zoom_level) + 1
-				combinedTd.tile_header.zoom_table = make([]TileZoomTable, zooms)
-				combinedTd.poi_data = make([][]POIData, zooms)
-				combinedTd.way_data = make([][]WayProperties, zooms)
-
-				hasData := false
-				isWater := true
-				anyMapCovered := false
-
-				for ip, p := range ps {
-					// Find subfile in this parser that matches baseZoom
-					psi := findSubFileByZoom(p, baseZoom)
-					if psi == -1 {
-						// Check if this zoom level exists in ANY subfile
-						psi = findSubFileContainingZoom(p, baseZoom)
-						if psi == -1 {
-							continue
-						}
+				if shouldProcess {
+					jobs <- tileJob{
+						si:       si,
+						tx:       tx,
+						ty:       ty,
+						idx:      idx,
+						baseZoom: baseZoom,
+						resCh:    resCh,
 					}
-
-					idx := p.GetTileIndex(psi, tx, ty)
-					if idx == nil {
-						continue
-					}
-
-					anyMapCovered = true
-					if !idx.IsWater {
-						isWater = false
-					}
-
-					// If offset changed, it has data
-					sf := &p.data.subfiles[psi]
-					i := sf.TileIndex(tx, ty)
-					if idx.Offset != sf.tile_indexes[i+1].Offset {
-						td, err := p.GetTileData(psi, tx, ty)
-						if err != nil {
-							return err
-						}
-						hasData = true
-						// isWater = false // Removed: Water tiles can have data (e.g. boundaries)
-
-						// Merge td into combinedTd
-						for zi := 0; zi < zooms; zi++ {
-							combinedTd.tile_header.zoom_table[zi].num_pois += uint32(len(td.poi_data[zi]))
-							combinedTd.tile_header.zoom_table[zi].num_ways += uint32(len(td.way_data[zi]))
-
-							for _, poi := range td.poi_data[zi] {
-								newPoi := poi
-								newPoi.tag_id = remap_tags(poi.tag_id, poiMapping[ip])
-								combinedTd.poi_data[zi] = append(combinedTd.poi_data[zi], newPoi)
-							}
-							for _, way := range td.way_data[zi] {
-								newWay := way
-								newWay.tag_id = remap_tags(way.tag_id, wayMapping[ip])
-								combinedTd.way_data[zi] = append(combinedTd.way_data[zi], newWay)
-							}
-						}
-					}
-				}
-
-				if !anyMapCovered {
-					isWater = false
-				}
-
-				indexEntries[idx].IsWater = isWater
-
-				if hasData {
-					combinedTd.normalize()
-					data, err := mw.WriteTileData(combinedTd)
-					if err != nil {
-						return err
-					}
-					f.Write(data)
 				} else {
-					// Empty tile, offset is same as next tile.
-					// We'll fix this in the next iteration or at the end.
+					resCh <- tileResult{idx: idx, isWater: false, hasData: false}
 				}
+
+				// If queue full, pop and process
+				if len(resultQueue) >= concurrency*2 {
+					res := <-resultQueue[0]
+					resultQueue = resultQueue[1:]
+
+					if res.err != nil {
+						return res.err
+					}
+
+					tilePos, _ := f.Seek(0, io.SeekCurrent)
+					relativeOffset := uint64(tilePos) - zic.pos
+					indexEntries[res.idx].Offset = relativeOffset
+					indexEntries[res.idx].IsWater = res.isWater
+
+					if res.hasData {
+						f.Write(res.data)
+					}
+				}
+			}
+		}
+
+		// Drain remaining results
+		for _, resCh := range resultQueue {
+			res := <-resCh
+			if res.err != nil {
+				return res.err
+			}
+
+			tilePos, _ := f.Seek(0, io.SeekCurrent)
+			relativeOffset := uint64(tilePos) - zic.pos
+			indexEntries[res.idx].Offset = relativeOffset
+			indexEntries[res.idx].IsWater = res.isWater
+
+			if res.hasData {
+				f.Write(res.data)
 			}
 		}
 
@@ -222,6 +204,101 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	err = mw.FinalizeHeader(&outHeader)
 
 	return err
+}
+
+type tileJob struct {
+	si, tx, ty, idx int
+	baseZoom        uint8
+	resCh           chan tileResult
+}
+
+type tileResult struct {
+	data    []byte
+	hasData bool
+	isWater bool
+	idx     int
+	err     error
+}
+
+func mergeWorker(jobs <-chan tileJob, ps []*MapsforgeParser, outHeader *Header, poiMapping, wayMapping [][]uint32, mw *MapsforgeWriter) {
+	for job := range jobs {
+		res := tileResult{idx: job.idx, isWater: true}
+
+		combinedTd := &TileData{}
+		zooms := int(outHeader.zoom_interval[job.si].max_zoom_level-outHeader.zoom_interval[job.si].min_zoom_level) + 1
+		combinedTd.tile_header.zoom_table = make([]TileZoomTable, zooms)
+		combinedTd.poi_data = make([][]POIData, zooms)
+		combinedTd.way_data = make([][]WayProperties, zooms)
+
+		anyMapCovered := false
+
+		for ip, p := range ps {
+			// Find subfile in this parser that matches baseZoom
+			psi := findSubFileByZoom(p, job.baseZoom)
+			if psi == -1 {
+				// Check if this zoom level exists in ANY subfile
+				psi = findSubFileContainingZoom(p, job.baseZoom)
+				if psi == -1 {
+					continue
+				}
+			}
+
+			idx := p.GetTileIndex(psi, job.tx, job.ty)
+			if idx == nil {
+				continue
+			}
+
+			anyMapCovered = true
+			if !idx.IsWater {
+				res.isWater = false
+			}
+
+			// If offset changed, it has data
+			sf := &p.data.subfiles[psi]
+			i := sf.TileIndex(job.tx, job.ty)
+			if idx.Offset != sf.tile_indexes[i+1].Offset {
+				td, err := p.GetTileData(psi, job.tx, job.ty)
+				if err != nil {
+					res.err = err
+					job.resCh <- res
+					continue
+				}
+				res.hasData = true
+
+				// Merge td into combinedTd
+				for zi := 0; zi < zooms; zi++ {
+					combinedTd.tile_header.zoom_table[zi].num_pois += uint32(len(td.poi_data[zi]))
+					combinedTd.tile_header.zoom_table[zi].num_ways += uint32(len(td.way_data[zi]))
+
+					for _, poi := range td.poi_data[zi] {
+						newPoi := poi
+						newPoi.tag_id = remap_tags(poi.tag_id, poiMapping[ip])
+						combinedTd.poi_data[zi] = append(combinedTd.poi_data[zi], newPoi)
+					}
+					for _, way := range td.way_data[zi] {
+						newWay := way
+						newWay.tag_id = remap_tags(way.tag_id, wayMapping[ip])
+						combinedTd.way_data[zi] = append(combinedTd.way_data[zi], newWay)
+					}
+				}
+			}
+		}
+
+		if !anyMapCovered {
+			res.isWater = false
+		}
+
+		if res.hasData {
+			combinedTd.normalize()
+			var err error
+			res.data, err = mw.WriteTileData(combinedTd)
+			if err != nil {
+				res.err = err
+			}
+		}
+
+		job.resCh <- res
+	}
 }
 
 func merge_tags_simple(tcs []TagsStat) (result TagsStat, mapping [][]uint32) {
