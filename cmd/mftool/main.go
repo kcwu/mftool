@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kcwu/mftool/cmd"
+	"github.com/kcwu/mftool/internal/cli"
 )
 
 func main() {
 
-	if err := cmd.RootCmd.Execute(); err != nil {
+	if err := cli.RootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}

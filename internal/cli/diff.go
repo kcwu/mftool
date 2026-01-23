@@ -1,9 +1,9 @@
-package cmd
+package cli
 
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/kcwu/mftool/mapsforge"
+	"github.com/kcwu/mftool/internal/mapsforge"
 )
 
 var diffCmd = &cobra.Command{
