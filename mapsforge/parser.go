@@ -198,7 +198,7 @@ func (mp *MapsforgeParser) parseSubFilePartial(r *raw_reader, h *Header, sf *Sub
 		b1234 := r.uint32()
 		sf.tile_indexes[i] = TileIndexEntry{
 			IsWater: b0&0x80 != 0,
-			Offset:   uint64(b0&0x7f)<<32 | uint64(b1234),
+			Offset:  uint64(b0&0x7f)<<32 | uint64(b1234),
 		}
 	}
 

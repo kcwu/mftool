@@ -4,7 +4,6 @@ import (
 	"fmt"
 )
 
-
 func (d *MapsforgeData) dump_header() {
 	h := d.header
 	fmt.Println("header_size:", h.header_size)

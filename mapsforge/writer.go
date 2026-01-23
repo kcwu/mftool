@@ -201,7 +201,7 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 	// We'll calculate this after writing POIs
 	// Placeholder for VBE-U (max 5 bytes, let's just use a large enough temporary buffer or calculate it)
 	// Actually, let's write POIs to a separate buffer first.
-	
+
 	var poiBuf bytes.Buffer
 	poiWriter := newRawWriter(&poiBuf)
 	for zi := 0; zi < zooms; zi++ {
@@ -229,7 +229,7 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
 	w.VbeS(pd.lat)
 	w.VbeS(pd.lon)
-	
+
 	special := uint8(pd.layer+5)<<4 | uint8(len(pd.tag_id)&0xf)
 	w.uint8(special)
 	for _, tag := range pd.tag_id {
@@ -315,10 +315,10 @@ func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties) 
 		ww.VbeU(uint32(len(block.data))) // amount of way coordinate blocks
 		// Wait, parser says:
 		/*
-		num_way := r.VbeU()
-		wp.block[bi].data = make([][]LatLon, num_way)
-		for wi := uint32(0); wi < num_way; wi++ {
-			num_node := r.VbeU()
+			num_way := r.VbeU()
+			wp.block[bi].data = make([][]LatLon, num_way)
+			for wi := uint32(0); wi < num_way; wi++ {
+				num_node := r.VbeU()
 		*/
 		// Parser treats WayData as multiple segments?
 		for _, nodes := range block.data {
@@ -336,13 +336,13 @@ func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties) 
 
 func (mw *MapsforgeWriter) FinalizeHeader(h *Header) error {
 	rw := newRawWriter(mw.w)
-	
+
 	// Go back to zoom interval config
 	// magic (20) + header size (4) + rest of header fields
 	// We need to exactly locate it.
 	// Actually it's easier to just store the position in WriteHeader.
 	// Let's re-calculate it or use a simpler approach.
-	
+
 	// For now, let's assume we can just overwrite the whole header if we have it all.
 	mw.w.Seek(0, io.SeekStart)
 	rw.fixedString(mapsforge_file_magic, 20)
@@ -358,12 +358,24 @@ func (mw *MapsforgeWriter) FinalizeHeader(h *Header) error {
 	rw.VbeString(h.projection)
 
 	var flags uint8
-	if h.has_debug { flags |= 0x80 }
-	if h.has_map_start { flags |= 0x40 }
-	if h.has_start_zoom { flags |= 0x20 }
-	if h.has_language_preference { flags |= 0x10 }
-	if h.has_comment { flags |= 0x08 }
-	if h.has_created_by { flags |= 0x04 }
+	if h.has_debug {
+		flags |= 0x80
+	}
+	if h.has_map_start {
+		flags |= 0x40
+	}
+	if h.has_start_zoom {
+		flags |= 0x20
+	}
+	if h.has_language_preference {
+		flags |= 0x10
+	}
+	if h.has_comment {
+		flags |= 0x08
+	}
+	if h.has_created_by {
+		flags |= 0x04
+	}
 	rw.uint8(flags)
 
 	if h.has_map_start {
@@ -401,6 +413,6 @@ func (mw *MapsforgeWriter) FinalizeHeader(h *Header) error {
 		rw.uint64(zic.pos)
 		rw.uint64(zic.size)
 	}
-	
+
 	return nil
 }

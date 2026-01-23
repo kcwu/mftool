@@ -102,8 +102,6 @@ func merge_tags(tcs []TagsStat) (result TagsStat, mapping [][]uint32) {
 	// Sort by count descending, then by string ascending for stability
 	sort.Sort(ByCount(result.stat))
 
-
-
 	mapping = make([][]uint32, len(tcs))
 	for i, tc := range tcs {
 		mapping[i] = make([]uint32, len(tc.stat))

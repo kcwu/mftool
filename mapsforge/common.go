@@ -44,7 +44,7 @@ type ZoomIntervalConfig struct {
 
 type TileIndexEntry struct {
 	IsWater bool
-	Offset   uint64
+	Offset  uint64
 }
 
 type TileZoomTable struct {

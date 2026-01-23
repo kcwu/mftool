@@ -81,7 +81,7 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	for si := 0; si < len(outHeader.zoom_interval); si++ {
 		zic := &outHeader.zoom_interval[si]
 		baseZoom := zic.base_zoom_level
-		
+
 		x, Y := outHeader.min.ToXY(baseZoom)
 		X, y := outHeader.max.ToXY(baseZoom)
 		len_x := X - x + 1
@@ -220,7 +220,7 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	finalSize, _ := f.Seek(0, io.SeekEnd)
 	outHeader.file_size = uint64(finalSize)
 	err = mw.FinalizeHeader(&outHeader)
-	
+
 	return err
 }
 
