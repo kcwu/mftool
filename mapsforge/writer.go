@@ -7,43 +7,60 @@ import (
 )
 
 type raw_writer struct {
-	w io.Writer
+	w       io.Writer
+	scratch [8]byte
 }
 
 func newRawWriter(w io.Writer) *raw_writer {
-	return &raw_writer{w}
+	return &raw_writer{w: w}
 }
 
 func (w *raw_writer) uint8(v uint8) {
-	binary.Write(w.w, binary.BigEndian, v)
+	w.scratch[0] = v
+	w.w.Write(w.scratch[:1])
 }
 
 func (w *raw_writer) uint16(v uint16) {
-	binary.Write(w.w, binary.BigEndian, v)
+	binary.BigEndian.PutUint16(w.scratch[:], v)
+	w.w.Write(w.scratch[:2])
 }
 
 func (w *raw_writer) uint32(v uint32) {
-	binary.Write(w.w, binary.BigEndian, v)
+	binary.BigEndian.PutUint32(w.scratch[:], v)
+	w.w.Write(w.scratch[:4])
 }
 
 func (w *raw_writer) uint64(v uint64) {
-	binary.Write(w.w, binary.BigEndian, v)
+	binary.BigEndian.PutUint64(w.scratch[:], v)
+	w.w.Write(w.scratch[:8])
 }
 
 func (w *raw_writer) int32(v int32) {
-	binary.Write(w.w, binary.BigEndian, v)
+	binary.BigEndian.PutUint32(w.scratch[:], uint32(v))
+	w.w.Write(w.scratch[:4])
 }
 
 func (w *raw_writer) VbeU(v uint32) {
+	if v < 0x80 {
+		w.uint8(uint8(v))
+		return
+	}
+
+	// Max VBE for uint32 is 5 bytes
+	var buf [5]byte
+	i := 0
 	for {
 		b := uint8(v & 0x7f)
 		v >>= 7
 		if v == 0 {
-			w.uint8(b)
+			buf[i] = b
+			i++
 			break
 		}
-		w.uint8(b | 0x80)
+		buf[i] = b | 0x80
+		i++
 	}
+	w.w.Write(buf[:i])
 }
 
 func (w *raw_writer) VbeS(v int32) {
@@ -55,18 +72,33 @@ func (w *raw_writer) VbeS(v int32) {
 	}
 
 	v_u := uint32(abs_v)
+	if v_u < 0x40 {
+		b := uint8(v_u)
+		if sign {
+			b |= 0x40
+		}
+		w.uint8(b)
+		return
+	}
+
+	// Max VBE for int32 is 5 bytes
+	var buf [5]byte
+	i := 0
 	for {
 		if v_u < 0x40 { // fits in 6 bits
 			b := uint8(v_u)
 			if sign {
 				b |= 0x40
 			}
-			w.uint8(b)
+			buf[i] = b
+			i++
 			break
 		}
-		w.uint8(uint8(v_u&0x7f) | 0x80)
+		buf[i] = uint8(v_u&0x7f) | 0x80
+		i++
 		v_u >>= 7
 	}
+	w.w.Write(buf[:i])
 }
 
 func (w *raw_writer) VbeString(s string) {
