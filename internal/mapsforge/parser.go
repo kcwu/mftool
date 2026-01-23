@@ -320,13 +320,6 @@ func (sf *SubFile) TileIndex(x, y int) int {
 	return (x - sf.x) + len_x*(y-sf.y)
 }
 
-func CmdParse(args []string) error {
-	_, err := ParseFile(args[0], true)
-	if err != nil {
-		return err
-	}
-	return nil
-}
 func (p *MapsforgeParser) GetTileIndex(si, x, y int) *TileIndexEntry {
 	if si < 0 || si >= len(p.data.subfiles) {
 		return nil

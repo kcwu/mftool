@@ -50,6 +50,13 @@ The tool reports:
 - Specific tile indices that differ in water status or data offset.
 - Detailed tag or coordinate differences if semantic checking is enabled.
 
+### Validate Map
+Check the integrity of a map file.
+
+```bash
+./mftool validate file.map
+```
+
 ### Dump Map Info
 Dump information about a map file.
 
