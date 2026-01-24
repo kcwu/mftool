@@ -50,6 +50,13 @@ The tool reports:
 - Specific tile indices that differ in water status or data offset.
 - Detailed tag or coordinate differences if semantic checking is enabled.
 
+### Crop Map
+Extract a sub-region from a map file.
+
+```bash
+./mftool crop output.map input.map --bbox minLon,minLat,maxLon,maxLat
+```
+
 ### Validate Map
 Check the integrity of a map file.
 
