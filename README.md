@@ -18,6 +18,16 @@
     - Tile index details (offsets, water flags).
     - Decoded POI and Way data.
 
+    - Decoded POI and Way data.
+
+## Installation
+
+To install `mftool` directly from the repository:
+
+```bash
+go install github.com/kcwu/mftool/cmd/mftool@latest
+```
+
 ## Build
 
 Building the tool requires Go 1.24+ (or compatible).
