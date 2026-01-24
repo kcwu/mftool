@@ -13,6 +13,9 @@
     - Metadata differences (header fields).
     - Tile-level differences (water flags, offsets).
     - Semantic mismatches.
+- **Crop**: Extract a sub-region from a map file using:
+    - Bounding box coordinates.
+    - Center point and distance.
 - **Dump**: Inspect the internal structure of a `.map` file, including:
     - Header information.
     - Tile index details (offsets, water flags).
