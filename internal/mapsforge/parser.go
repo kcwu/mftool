@@ -162,7 +162,7 @@ func (mp *MapsforgeParser) ParseRest() error {
 			for y := sf.y; y <= sf.Y; y++ {
 				_, err := mp.GetTileData(si, x, y)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed at si=%d tile=%d,%d: %w", si, x, y, err)
 				}
 			}
 		}
@@ -248,6 +248,36 @@ func (mp *MapsforgeParser) GetTileData(si, x, y int) (*TileData, error) {
 		sf.tile_data[i] = td
 	}
 	return sf.tile_data[i], nil
+}
+
+func (mp *MapsforgeParser) GetRawTileBytes(si, x, y int) ([]byte, error) {
+	if !(0 <= si && si < len(mp.data.subfiles)) {
+		return nil, errors.New("bad subfile index")
+	}
+	sf := &mp.data.subfiles[si]
+
+	if !(sf.x <= x && x <= sf.X && sf.y <= y && y <= sf.Y) {
+		return nil, nil
+	}
+
+	len_x := sf.X - sf.x + 1
+	i := (x - sf.x) + len_x*(y-sf.y)
+
+	// Check if this tile has data (offset differs from next)
+	if sf.tile_indexes[i].Offset == sf.tile_indexes[i+1].Offset {
+		return nil, nil // No data
+	}
+
+	sf_base := sf.zoom_interval.pos
+	b := sf_base + sf.tile_indexes[i].Offset
+	e := sf_base + sf.tile_indexes[i+1].Offset
+
+	// Check bounds
+	if b > uint64(len(mp.file_content)) || e > uint64(len(mp.file_content)) {
+		return nil, errors.New("offset out of bounds")
+	}
+
+	return mp.file_content[b:e], nil
 }
 
 func (mp *MapsforgeParser) getBaseZooms() []uint8 {

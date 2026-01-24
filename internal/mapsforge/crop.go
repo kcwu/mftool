@@ -14,7 +14,7 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 		return fmt.Errorf("invalid bbox format (minLon,minLat,maxLon,maxLat): %v", err)
 	}
 
-	p, err := ParseFile(inputPath, true)
+	p, err := ParseFile(inputPath, false)
 	if err != nil {
 		return err
 	}
@@ -45,6 +45,11 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 	}
 
 	outHeader.creation_date = uint64(time.Now().UnixMilli())
+
+	// Deep copy zoom intervals to avoid modifying source parser state
+	srcIntervals := outHeader.zoom_interval
+	outHeader.zoom_interval = make([]ZoomIntervalConfig, len(srcIntervals))
+	copy(outHeader.zoom_interval, srcIntervals)
 
 	f, err := os.Create(outputPath)
 	if err != nil {
@@ -120,16 +125,7 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 				indexEntries[idx].IsWater = isWater
 
 				if hasData {
-					td, err := p.GetTileData(srcSi, tx, ty)
-					if err != nil {
-						return err
-					}
-					// Write (serialize) the tile data
-					// Note: We might be re-encoding here. Ideally we could just copy raw bytes if we had access to raw tile blob.
-					// But current parser implementation parses into structs.
-					// Using WriteTileData is safer to ensure correctness even if a bit slower than raw copy.
-					// Given optimization, this should be fast enough.
-					bytes, err := mw.WriteTileData(td)
+					bytes, err := p.GetRawTileBytes(srcSi, tx, ty)
 					if err != nil {
 						return err
 					}
