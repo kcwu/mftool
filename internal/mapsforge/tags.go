@@ -75,12 +75,10 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 	// Worker
 	for w := 0; w < numCPU; w++ {
 		go func() {
+			// Initialize local stats 1:1 with header
 			stats := &map_stats{}
-			// Ensure we initialize stats with empty tag lists so find_tag_by_str works consistently
-			// Actually, we can just start empty and let merge union them.
-			// But for consistent IDs? Local stats use local IDs. Merge handles remapping.
-			stats.poi_stats.init(nil)
-			stats.way_stats.init(nil)
+			stats.poi_stats.init(p.data.header.poi_tags)
+			stats.way_stats.init(p.data.header.way_tags)
 
 			for j := range jobs {
 				td, err := p.GetTileData(j.si, j.x, j.y)
@@ -88,7 +86,6 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 					continue
 				}
 
-				// Calculate zoom
 				sf := &p.data.subfiles[j.si]
 				minZoom := sf.zoom_interval.min_zoom_level
 
@@ -96,14 +93,8 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 					zoom := int(minZoom) + zi
 					for _, poi := range pois {
 						for _, tag := range poi.tag_id {
-							// For local stats, we need to map tag ID from HEADER (global to file) to LOCAL stat index.
-							// The header tags are fixed.
-							// We should pre-populate local stats with header tags?
-							// Or better: `map_stats` builds its own string table.
-							// `td` has `tag_id` which are indices into `p.data.header.poi_tags`.
-							tagStr := p.data.header.poi_tags[tag]
-							tagIdx := stats.poi_stats.find_tag_by_str(tagStr)
-							stats.poi_stats.add(tagIdx, zoom, 1)
+							// tag is index into header
+							stats.poi_stats.add(tag, zoom, 1)
 						}
 					}
 				}
@@ -111,9 +102,7 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 					zoom := int(minZoom) + zi
 					for _, way := range ways {
 						for _, tag := range way.tag_id {
-							tagStr := p.data.header.way_tags[tag]
-							tagIdx := stats.way_stats.find_tag_by_str(tagStr)
-							stats.way_stats.add(tagIdx, zoom, 1)
+							stats.way_stats.add(tag, zoom, 1)
 						}
 					}
 				}
@@ -127,11 +116,6 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 		for si, sf := range p.data.subfiles {
 			for x := sf.x; x <= sf.X; x++ {
 				for y := sf.y; y <= sf.Y; y++ {
-					// We can check index first to skip empty tiles?
-					// GetTileData checks cache and index.
-					// Reading index is cheap?
-					// Let's iterate all valid x,y.
-					// GetTileData ensures efficient skip if no data offset change.
 					jobs <- job{si, x, y}
 				}
 			}
@@ -139,28 +123,31 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 		close(jobs)
 	}()
 
-	// Collector
-	var statsList []*map_stats
+	// Collector & Merger
+	finalStats := &map_stats{}
+	finalStats.poi_stats.init(p.data.header.poi_tags)
+	finalStats.way_stats.init(p.data.header.way_tags)
+
 	for w := 0; w < numCPU; w++ {
-		statsList = append(statsList, <-results)
+		part := <-results
+		// Merge part into finalStats (by index)
+		merge_stats_by_index(&finalStats.poi_stats, &part.poi_stats)
+		merge_stats_by_index(&finalStats.way_stats, &part.way_stats)
 	}
 
-	// Merge partial results
-	// map_stats is struct { poi_stats, way_stats TagsStat }
-	// We can use merge_tags logic.
+	return finalStats
+}
 
-	var finalStats map_stats
-	var poi_stats_list []TagsStat
-	var way_stats_list []TagsStat
-	for _, s := range statsList {
-		poi_stats_list = append(poi_stats_list, s.poi_stats)
-		way_stats_list = append(way_stats_list, s.way_stats)
+func merge_stats_by_index(dst, src *TagsStat) {
+	for i := range dst.stat {
+		d := &dst.stat[i]
+		s := &src.stat[i]
+		d.count += s.count
+		d.appear = min(d.appear, s.appear)
+		for z := 0; z < MAX_ZOOM; z++ {
+			d.at[z] += s.at[z]
+		}
 	}
-
-	finalStats.poi_stats, _ = merge_tags(poi_stats_list)
-	finalStats.way_stats, _ = merge_tags(way_stats_list)
-
-	return &finalStats
 }
 
 func (tc *TagsStat) init(strs []string) {
@@ -228,7 +215,6 @@ func merge_map_tags(ms []*map_stats) (result map_stats, poi_mapping [][]uint32, 
 	result.way_stats, way_mapping = merge_tags(way_stats)
 	return
 }
-
 
 func (tc *TagsStat) print(prefix string) {
 	// calculate width

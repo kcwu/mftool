@@ -137,7 +137,7 @@ func CmdDiff(args []string, flagDetail bool) error {
 
 	var ps [2]*MapsforgeParser
 	for i, fn := range args {
-		p, err := ParseFile(fn, true)
+		p, err := ParseFile(fn, false)
 		if err != nil {
 			return err
 		}
@@ -154,7 +154,7 @@ func CmdDiff(args []string, flagDetail bool) error {
 	// The tag_id of two map files may be different, so we need to remap them.
 	var stats []*map_stats
 	for _, p := range ps {
-		stats = append(stats, make_map_stats(&p.data.header, p.getTiles()))
+		stats = append(stats, CollectStatsParallel(p))
 	}
 
 	merged_stats, poi_mapping, way_mapping := merge_map_tags(stats)
