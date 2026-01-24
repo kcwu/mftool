@@ -18,8 +18,6 @@
     - Tile index details (offsets, water flags).
     - Decoded POI and Way data.
 
-    - Decoded POI and Way data.
-
 ## Installation
 
 To install `mftool` directly from the repository:

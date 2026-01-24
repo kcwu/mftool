@@ -124,8 +124,7 @@ func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error
 		}
 	}
 
-	way_data_size := r.VbeU()
-	_ = way_data_size
+	r.VbeU() // skip way_data_size
 
 	wp.sub_tile_bitmap = r.uint16()
 

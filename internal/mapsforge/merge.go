@@ -323,24 +323,6 @@ func mergeWorker(jobs <-chan tileJob, ps []*MapsforgeParser, outHeader *Header, 
 	}
 }
 
-func merge_tags_simple(tcs []TagsStat) (result TagsStat, mapping [][]uint32) {
-	for _, tc := range tcs {
-		for _, stat := range tc.stat {
-			result.find_tag_by_str(stat.str)
-		}
-	}
-
-	mapping = make([][]uint32, len(tcs))
-	for i, tc := range tcs {
-		mapping[i] = make([]uint32, len(tc.stat))
-		for j, stat := range tc.stat {
-			idx := result.find_tag_by_str(stat.str)
-			mapping[i][j] = idx
-		}
-	}
-	return
-}
-
 func get_tag_strings(ts TagsStat) []string {
 	var res []string
 	for _, s := range ts.stat {
