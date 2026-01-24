@@ -124,7 +124,8 @@ func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error
 		}
 	}
 
-	r.VbeU() // skip way_data_size
+	way_data_size := r.VbeU()
+	start_len := len(r.buf)
 
 	wp.sub_tile_bitmap = r.uint16()
 
@@ -177,6 +178,11 @@ func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error
 					r.VbeS()}
 			}
 		}
+	}
+
+	consumed := start_len - len(r.buf)
+	if uint32(consumed) != way_data_size {
+		return fmt.Errorf("way_data_size mismatch: expected %d, consumed %d", way_data_size, consumed)
 	}
 
 	return r.err
