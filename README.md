@@ -84,3 +84,7 @@ Options:
 - `cmd/mftool/`: Main entry point.
 - `internal/cli/`: CLI command definitions (Cobra).
 - `internal/mapsforge/`: Core library for parsing, writing, and merging Mapsforge files.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
