@@ -2,6 +2,7 @@ package mapsforge
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 )
 
@@ -60,6 +61,106 @@ func make_map_stats(header *Header, tiles []Tile) *map_stats {
 	}
 
 	return &result
+}
+
+func CollectStatsParallel(p *MapsforgeParser) *map_stats {
+	numCPU := runtime.NumCPU()
+
+	type job struct {
+		si, x, y int
+	}
+	jobs := make(chan job, numCPU*4)
+	results := make(chan *map_stats, numCPU)
+
+	// Worker
+	for w := 0; w < numCPU; w++ {
+		go func() {
+			stats := &map_stats{}
+			// Ensure we initialize stats with empty tag lists so find_tag_by_str works consistently
+			// Actually, we can just start empty and let merge union them.
+			// But for consistent IDs? Local stats use local IDs. Merge handles remapping.
+			stats.poi_stats.init(nil)
+			stats.way_stats.init(nil)
+
+			for j := range jobs {
+				td, err := p.GetTileData(j.si, j.x, j.y)
+				if err != nil || td == nil {
+					continue
+				}
+
+				// Calculate zoom
+				sf := &p.data.subfiles[j.si]
+				minZoom := sf.zoom_interval.min_zoom_level
+
+				for zi, pois := range td.poi_data {
+					zoom := int(minZoom) + zi
+					for _, poi := range pois {
+						for _, tag := range poi.tag_id {
+							// For local stats, we need to map tag ID from HEADER (global to file) to LOCAL stat index.
+							// The header tags are fixed.
+							// We should pre-populate local stats with header tags?
+							// Or better: `map_stats` builds its own string table.
+							// `td` has `tag_id` which are indices into `p.data.header.poi_tags`.
+							tagStr := p.data.header.poi_tags[tag]
+							tagIdx := stats.poi_stats.find_tag_by_str(tagStr)
+							stats.poi_stats.add(tagIdx, zoom, 1)
+						}
+					}
+				}
+				for zi, ways := range td.way_data {
+					zoom := int(minZoom) + zi
+					for _, way := range ways {
+						for _, tag := range way.tag_id {
+							tagStr := p.data.header.way_tags[tag]
+							tagIdx := stats.way_stats.find_tag_by_str(tagStr)
+							stats.way_stats.add(tagIdx, zoom, 1)
+						}
+					}
+				}
+			}
+			results <- stats
+		}()
+	}
+
+	// Dispatcher
+	go func() {
+		for si, sf := range p.data.subfiles {
+			for x := sf.x; x <= sf.X; x++ {
+				for y := sf.y; y <= sf.Y; y++ {
+					// We can check index first to skip empty tiles?
+					// GetTileData checks cache and index.
+					// Reading index is cheap?
+					// Let's iterate all valid x,y.
+					// GetTileData ensures efficient skip if no data offset change.
+					jobs <- job{si, x, y}
+				}
+			}
+		}
+		close(jobs)
+	}()
+
+	// Collector
+	var statsList []*map_stats
+	for w := 0; w < numCPU; w++ {
+		statsList = append(statsList, <-results)
+	}
+
+	// Merge partial results
+	// map_stats is struct { poi_stats, way_stats TagsStat }
+	// We can use merge_tags logic.
+
+	var finalStats map_stats
+	var poi_stats_list []TagsStat
+	var way_stats_list []TagsStat
+	for _, s := range statsList {
+		poi_stats_list = append(poi_stats_list, s.poi_stats)
+		way_stats_list = append(way_stats_list, s.way_stats)
+	}
+
+	finalStats.poi_stats, _ = merge_tags(poi_stats_list)
+	finalStats.way_stats, _ = merge_tags(way_stats_list)
+
+	return &finalStats
 }
 
 func (tc *TagsStat) init(strs []string) {
@@ -127,6 +228,7 @@ func merge_map_tags(ms []*map_stats) (result map_stats, poi_mapping [][]uint32, 
 	result.way_stats, way_mapping = merge_tags(way_stats)
 	return
 }
+
 
 func (tc *TagsStat) print(prefix string) {
 	// calculate width

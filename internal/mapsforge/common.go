@@ -1,5 +1,7 @@
 package mapsforge
 
+import "sync"
+
 type LatLon struct {
 	lat int32
 	lon int32
@@ -105,6 +107,7 @@ type SubFile struct {
 
 	tile_indexes []TileIndexEntry
 	tile_data    []*TileData
+	mu           sync.Mutex
 }
 
 type MapsforgeData struct {

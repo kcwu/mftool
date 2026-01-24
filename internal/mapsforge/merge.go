@@ -20,7 +20,7 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 
 	var ps []*MapsforgeParser
 	for _, path := range inputPaths {
-		p, err := ParseFile(path, true) // Call ParseRest via ParseFile(..., true)
+		p, err := ParseFile(path, false) // Lazy parsing
 		if err != nil {
 			return err
 		}
@@ -32,9 +32,10 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	}
 
 	// 1. Merge Tags
+	// 1. Merge Tags
 	var stats []*map_stats
 	for _, p := range ps {
-		stats = append(stats, make_map_stats(&p.data.header, p.getTiles()))
+		stats = append(stats, CollectStatsParallel(p))
 	}
 
 	merged, poiMapping, wayMapping := merge_map_tags(stats)
@@ -58,6 +59,11 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 			outHeader.max.lon = h.max.lon
 		}
 	}
+
+	// Deep copy zoom intervals to avoid corrupting the first input map parser
+	srcIntervals := outHeader.zoom_interval
+	outHeader.zoom_interval = make([]ZoomIntervalConfig, len(srcIntervals))
+	copy(outHeader.zoom_interval, srcIntervals)
 
 	outHeader.poi_tags = get_tag_strings(mergedPoiTags)
 	outHeader.way_tags = get_tag_strings(mergedWayTags)

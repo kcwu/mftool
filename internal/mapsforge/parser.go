@@ -226,28 +226,41 @@ func (mp *MapsforgeParser) GetTileData(si, x, y int) (*TileData, error) {
 
 	len_x := sf.X - sf.x + 1
 	i := (x - sf.x) + len_x*(y-sf.y)
-	if sf.tile_data[i] == nil {
-		td := &TileData{}
 
-		if sf.tile_indexes[i].Offset != sf.tile_indexes[i+1].Offset {
-			sf_base := sf.zoom_interval.pos
-			b := sf_base + sf.tile_indexes[i].Offset
-			e := sf_base + sf.tile_indexes[i+1].Offset
-			tdp := newTileDataParser(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
-			var err error
-			td, err = tdp.parse()
+	sf.mu.Lock()
+	cached := sf.tile_data[i]
+	sf.mu.Unlock()
 
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			zooms := (sf.zoom_interval.max_zoom_level - sf.zoom_interval.min_zoom_level) + 1
-			td.poi_data = make([][]POIData, zooms)
-			td.way_data = make([][]WayProperties, zooms)
-		}
-		sf.tile_data[i] = td
+	if cached != nil {
+		return cached, nil
 	}
-	return sf.tile_data[i], nil
+
+	td := &TileData{}
+
+	if sf.tile_indexes[i].Offset != sf.tile_indexes[i+1].Offset {
+		sf_base := sf.zoom_interval.pos
+		b := sf_base + sf.tile_indexes[i].Offset
+		e := sf_base + sf.tile_indexes[i+1].Offset
+		tdp := newTileDataParser(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
+		var err error
+		td, err = tdp.parse()
+
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		zooms := (sf.zoom_interval.max_zoom_level - sf.zoom_interval.min_zoom_level) + 1
+		td.poi_data = make([][]POIData, zooms)
+		td.way_data = make([][]WayProperties, zooms)
+	}
+
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	if sf.tile_data[i] != nil {
+		return sf.tile_data[i], nil
+	}
+	sf.tile_data[i] = td
+	return td, nil
 }
 
 func (mp *MapsforgeParser) GetRawTileBytes(si, x, y int) ([]byte, error) {
