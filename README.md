@@ -8,7 +8,6 @@
     - Bounding box unions.
     - Tag mapping (POI and Way tags).
     - Water flags (`IsWater`), ensuring correct status even when data is present.
-    - Parallel processing for high performance.
 - **Diff**: Compare two `.map` files to detect:
     - Metadata differences (header fields).
     - Tile-level differences (water flags, offsets).
@@ -20,6 +19,9 @@
     - Header information.
     - Tile index details (offsets, water flags).
     - Decoded POI and Way data.
+- **Performance**:
+    - **Memory Mapped I/O**: Instant startup time for large map files.
+    - **Parallel Processing**: Multi-threaded parsing and merging.
 
 ## Installation
 
@@ -43,11 +45,13 @@ go build -o mftool cmd/mftool/main.go
 Merge multiple input maps into a single output file.
 
 ```bash
-./mftool merge output.map input1.map input2.map [input3.map ...]
+./mftool merge -o output.map input1.map input2.map [input3.map ...]
 ```
 
 Options:
-- `--tile <si>,<x>,<y>`: Only merge usage for a specific tile index (useful for debugging).
+- `-o, --output <file>`: Output map file (required).
+- `-f, --force`: Overwrite output file if it exists.
+- `--tile <si>,<x>,<y>`: Merge only usage for a specific tile index (useful for debugging).
 
 ### Diff Maps
 Compare two map files.
@@ -65,8 +69,16 @@ The tool reports:
 Extract a sub-region from a map file.
 
 ```bash
-./mftool crop output.map input.map --bbox minLon,minLat,maxLon,maxLat
+./mftool crop -o output.map input.map --bbox minLon,minLat,maxLon,maxLat
 ```
+Or by center and distance:
+```bash
+./mftool crop -o output.map input.map --center lat,lon --distance <km>
+```
+
+Options:
+- `-o, --output <file>`: Output map file (required).
+- `-f, --force`: Overwrite output file if it exists.
 
 ### Validate Map
 Check the integrity of a map file.
