@@ -16,11 +16,12 @@ var validateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		file := args[0]
 		fmt.Printf("Validating %s ...\n", file)
-		_, err := mapsforge.ParseFile(file, true)
+		p, err := mapsforge.ParseFile(file, true)
 		if err != nil {
 			fmt.Println("Error:", err)
 			os.Exit(1)
 		}
+		defer p.Close()
 		fmt.Println("File is valid.")
 	},
 }

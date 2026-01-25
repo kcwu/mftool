@@ -143,6 +143,7 @@ func CmdDiff(args []string, flagDetail bool) error {
 		}
 
 		ps[i] = p
+		defer p.Close()
 	}
 
 	compareHeaders(&ps[0].data.header, &ps[1].data.header)

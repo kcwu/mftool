@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"regexp"
+	"syscall"
 )
 
 const mapsforge_file_magic string = "mapsforge binary OSM"
@@ -23,6 +24,7 @@ type MapsforgeParser struct {
 	file_content []byte
 	reader       *raw_reader
 	data         *MapsforgeData
+	mmap         []byte
 }
 
 func NewMapsforgeParser(r io.Reader) *MapsforgeParser {
@@ -57,6 +59,13 @@ func (mp *MapsforgeParser) Parse() error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (mp *MapsforgeParser) Close() error {
+	if mp.mmap != nil {
+		return syscall.Munmap(mp.mmap)
 	}
 	return nil
 }
@@ -342,18 +351,43 @@ func ParseFile(fn string, all bool) (*MapsforgeParser, error) {
 	if err != nil {
 		return nil, err
 	}
+	// We don't defer f.Close() here because we need to mmap it.
+	// However, once mmapped, we can actually close the FD on linux.
+	// But let's verify. Mmap holds a reference.
+	// Safe to close f immediately after mmap.
 	defer f.Close()
 
-	p := NewMapsforgeParser(f)
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if stat.Size() == 0 {
+		return nil, errors.New("file is empty")
+	}
+
+	data, err := syscall.Mmap(int(f.Fd()), 0, int(stat.Size()), syscall.PROT_READ, syscall.MAP_PRIVATE)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &MapsforgeParser{
+		file_content: data,
+		mmap:         data,
+	}
+	p.reader = newRawReader(p.file_content)
+
 	err = p.Parse()
 	if err != nil {
-		return p, err
+		p.Close()
+		return nil, err
 	}
 	if all {
 		err = p.ParseRest()
-	}
-	if err != nil {
-		return p, err
+		if err != nil {
+			p.Close()
+			return nil, err
+		}
 	}
 	return p, nil
 }

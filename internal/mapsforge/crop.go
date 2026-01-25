@@ -18,6 +18,7 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 	if err != nil {
 		return err
 	}
+	defer p.Close()
 
 	// Microdegrees
 	cropMinLat := int32(minLat * 1000000)

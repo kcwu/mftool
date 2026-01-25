@@ -25,6 +25,7 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 			return err
 		}
 		ps = append(ps, p)
+		defer p.Close()
 	}
 
 	if len(ps) < 2 {

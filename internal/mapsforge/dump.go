@@ -154,6 +154,7 @@ func CmdDump(args []string, flagHeader bool, flagAll bool, flagTile string) erro
 	if err != nil {
 		return err
 	}
+	defer p.Close()
 	if flagHeader || flagAll {
 		p.data.dump_header()
 	}
