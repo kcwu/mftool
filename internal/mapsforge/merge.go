@@ -114,10 +114,15 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		// Placeholder for tile index
 		indexStartPos, _ := f.Seek(0, io.SeekCurrent)
 		indexEntries := make([]TileIndexEntry, len_x*len_y)
+
+		// Use buffered writer for index initialization
+		bwIndex := bufio.NewWriter(f)
+		rwIndex := newRawWriter(bwIndex)
 		for i := 0; i < len_x*len_y; i++ {
-			rw.uint8(0)
-			rw.uint32(0)
+			rwIndex.uint8(0)
+			rwIndex.uint32(0)
 		}
+		bwIndex.Flush()
 
 		// Write Tile Data
 		// We use a lookahead buffer to keep write order sequential
@@ -208,15 +213,18 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 
 		// Rewrite tile index
 		f.Seek(indexStartPos, io.SeekStart)
+		bwIndexRewrite := bufio.NewWriter(f)
+		rwIndexRewrite := newRawWriter(bwIndexRewrite)
 		for i := 0; i < len(indexEntries); i++ {
 			val := indexEntries[i].Offset
 			if indexEntries[i].IsWater {
 				val |= 0x8000000000
 			}
 			// Write 5 bytes
-			rw.uint8(uint8(val >> 32))
-			rw.uint32(uint32(val))
+			rwIndexRewrite.uint8(uint8(val >> 32))
+			rwIndexRewrite.uint32(uint32(val))
 		}
+		bwIndexRewrite.Flush()
 		f.Seek(endPos, io.SeekStart)
 	}
 
