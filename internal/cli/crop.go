@@ -11,11 +11,12 @@ import (
 )
 
 var (
-	flagBBox       string
-	flagCenter     string
-	flagDistance   float64
-	flagCropOutput string
-	flagCropForce  bool
+	flagBBox         string
+	flagCenter       string
+	flagDistance     float64
+	flagCropOutput   string
+	flagCropForce    bool
+	flagCropEstimate bool
 )
 
 var cropCmd = &cobra.Command{
@@ -32,15 +33,9 @@ var cropCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		output := flagCropOutput
 		input := args[0]
 
-		if !flagCropForce {
-			if _, err := os.Stat(output); err == nil {
-				return fmt.Errorf("output file %s already exists (use -f to overwrite)", output)
-			}
-		}
-
+		// Calculate bbox if center provided
 		bbox := flagBBox
 		if flagCenter != "" {
 			var lat, lon float64
@@ -68,6 +63,26 @@ var cropCmd = &cobra.Command{
 			bbox = fmt.Sprintf("%f,%f,%f,%f", minLon, minLat, maxLon, maxLat)
 		}
 
+		if flagCropEstimate {
+			size, err := mapsforge.EstimateCropSize(input, bbox)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Estimated size: %d bytes (%.2f MB)\n", size, float64(size)/1024/1024)
+			return nil
+		}
+
+		output := flagCropOutput
+		if output == "" {
+			return fmt.Errorf("required flag(s) \"output\" not set")
+		}
+
+		if !flagCropForce {
+			if _, err := os.Stat(output); err == nil {
+				return fmt.Errorf("output file %s already exists (use -f to overwrite)", output)
+			}
+		}
+
 		return mapsforge.CropMap(input, output, bbox)
 	},
 }
@@ -76,8 +91,9 @@ func init() {
 	cropCmd.Flags().StringVar(&flagBBox, "bbox", "", "bounding box: minLon,minLat,maxLon,maxLat")
 	cropCmd.Flags().StringVar(&flagCenter, "center", "", "center point: lat,lon")
 	cropCmd.Flags().Float64Var(&flagDistance, "distance", 0, "distance in km from center")
-	cropCmd.Flags().StringVarP(&flagCropOutput, "output", "o", "", "output map file (required)")
+	cropCmd.Flags().StringVarP(&flagCropOutput, "output", "o", "", "output map file (required unless --estimate-size)")
 	cropCmd.Flags().BoolVarP(&flagCropForce, "force", "f", false, "overwrite output file if it exists")
-	cropCmd.MarkFlagRequired("output")
+	cropCmd.Flags().BoolVar(&flagCropEstimate, "estimate-size", false, "estimate output size without writing")
+	// cropCmd.MarkFlagRequired("output") // Manually checked
 	RootCmd.AddCommand(cropCmd)
 }

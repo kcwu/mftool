@@ -163,3 +163,97 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 
 	return err
 }
+
+func EstimateCropSize(inputPath, bboxStr string) (uint64, error) {
+	var minLon, minLat, maxLon, maxLat float64
+	_, err := fmt.Sscanf(bboxStr, "%f,%f,%f,%f", &minLon, &minLat, &maxLon, &maxLat)
+	if err != nil {
+		return 0, fmt.Errorf("invalid bbox format (minLon,minLat,maxLon,maxLat): %v", err)
+	}
+
+	p, err := ParseFile(inputPath, false)
+	if err != nil {
+		return 0, err
+	}
+	defer p.Close()
+
+	// Microdegrees
+	cropMinLat := int32(minLat * 1000000)
+	cropMinLon := int32(minLon * 1000000)
+	cropMaxLat := int32(maxLat * 1000000)
+	cropMaxLon := int32(maxLon * 1000000)
+
+	// Intersection
+	outHeader := p.data.header
+	if cropMinLat > outHeader.min.lat {
+		outHeader.min.lat = cropMinLat
+	}
+	if cropMinLon > outHeader.min.lon {
+		outHeader.min.lon = cropMinLon
+	}
+	if cropMaxLat < outHeader.max.lat {
+		outHeader.max.lat = cropMaxLat
+	}
+	if cropMaxLon < outHeader.max.lon {
+		outHeader.max.lon = cropMaxLon
+	}
+
+	if outHeader.min.lat > outHeader.max.lat || outHeader.min.lon > outHeader.max.lon {
+		return 0, fmt.Errorf("crop region does not intersect with map coverage")
+	}
+
+	// Start with header size
+	totalSize := uint64(outHeader.header_size)
+
+	for si := 0; si < len(outHeader.zoom_interval); si++ {
+		zic := &outHeader.zoom_interval[si]
+		baseZoom := zic.base_zoom_level
+
+		// Calculate new tile range for this subfile based on intersected bbox
+		x, Y := outHeader.min.ToXY(baseZoom)
+		X, y := outHeader.max.ToXY(baseZoom)
+		len_x := int(X - x + 1)
+		len_y := int(Y - y + 1)
+		numTiles := len_x * len_y
+
+		// Subfile overhead
+		subFileSize := uint64(numTiles * 5)
+		if outHeader.has_debug {
+			subFileSize += 16 // "+++IndexStart+++"
+		}
+
+		// Find source subfile index for this zoom
+		srcSi := findSubFileByZoom(p, baseZoom)
+		if srcSi == -1 {
+			return 0, fmt.Errorf("source subfile not found for zoom %d", baseZoom)
+		}
+
+		sf := &p.data.subfiles[srcSi]
+
+		// Sum data sizes
+		for ty := y; ty <= Y; ty++ {
+			for tx := x; tx <= X; tx++ {
+				// Source logic from CropMap
+				// But we need to use source logic for source index lookup
+				// Correct: We need to use sf.TileIndex(tx, ty) on the SOURCE subfile
+				// Check bounds on source
+				if tx < sf.x || tx > sf.X || ty < sf.y || ty > sf.Y {
+					continue
+				}
+
+				srcLinearIdx := sf.TileIndex(tx, ty)
+				// Check if has data
+				offset := sf.tile_indexes[srcLinearIdx].Offset
+				nextOffset := sf.tile_indexes[srcLinearIdx+1].Offset
+
+				if offset != nextOffset {
+					subFileSize += (nextOffset - offset)
+				}
+			}
+		}
+
+		totalSize += subFileSize
+	}
+
+	return totalSize, nil
+}
