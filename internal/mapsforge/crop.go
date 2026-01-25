@@ -77,18 +77,22 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 		pos, _ := f.Seek(0, io.SeekCurrent)
 		zic.pos = uint64(pos)
 
-		rw := newRawWriter(f)
+		rw := newRawWriter()
 		if outHeader.has_debug {
 			rw.fixedString("+++IndexStart+++", 16)
+			// Writes to file immediately for this small part
+			f.Write(rw.Bytes())
 		}
 
 		// Placeholder for tile index
 		indexStartPos, _ := f.Seek(0, io.SeekCurrent)
 		indexEntries := make([]TileIndexEntry, len_x*len_y)
+		rwIndex := newRawWriter()
 		for i := 0; i < len_x*len_y; i++ {
-			rw.uint8(0)
-			rw.uint32(0)
+			rwIndex.uint8(0)
+			rwIndex.uint32(0)
 		}
+		f.Write(rwIndex.Bytes())
 
 		// Find source subfile index for this zoom
 		srcSi := findSubFileByZoom(p, baseZoom)
@@ -139,14 +143,16 @@ func CropMap(inputPath, outputPath string, bboxStr string) error {
 
 		// Rewrite tile index
 		f.Seek(indexStartPos, io.SeekStart)
+		rwIndexRewrite := newRawWriter()
 		for i := 0; i < len(indexEntries); i++ {
 			val := indexEntries[i].Offset
 			if indexEntries[i].IsWater {
 				val |= 0x8000000000
 			}
-			rw.uint8(uint8(val >> 32))
-			rw.uint32(uint32(val))
+			rwIndexRewrite.uint8(uint8(val >> 32))
+			rwIndexRewrite.uint32(uint32(val))
 		}
+		f.Write(rwIndexRewrite.Bytes())
 		f.Seek(endPos, io.SeekStart)
 	}
 

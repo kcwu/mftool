@@ -106,9 +106,11 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		pos, _ := f.Seek(0, io.SeekCurrent)
 		zic.pos = uint64(pos)
 
-		rw := newRawWriter(f)
+		rw := newRawWriter()
 		if outHeader.has_debug {
 			rw.fixedString("+++IndexStart+++", 16)
+			// Writes to file immediately for this small part
+			f.Write(rw.Bytes())
 		}
 
 		// Placeholder for tile index
@@ -116,13 +118,12 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		indexEntries := make([]TileIndexEntry, len_x*len_y)
 
 		// Use buffered writer for index initialization
-		bwIndex := bufio.NewWriter(f)
-		rwIndex := newRawWriter(bwIndex)
+		rwIndex := newRawWriter()
 		for i := 0; i < len_x*len_y; i++ {
 			rwIndex.uint8(0)
 			rwIndex.uint32(0)
 		}
-		bwIndex.Flush()
+		f.Write(rwIndex.Bytes())
 
 		// Write Tile Data
 		// We use a lookahead buffer to keep write order sequential
@@ -213,8 +214,9 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 
 		// Rewrite tile index
 		f.Seek(indexStartPos, io.SeekStart)
-		bwIndexRewrite := bufio.NewWriter(f)
-		rwIndexRewrite := newRawWriter(bwIndexRewrite)
+		// Rewrite tile index
+		f.Seek(indexStartPos, io.SeekStart)
+		rwIndexRewrite := newRawWriter()
 		for i := 0; i < len(indexEntries); i++ {
 			val := indexEntries[i].Offset
 			if indexEntries[i].IsWater {
@@ -224,7 +226,7 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 			rwIndexRewrite.uint8(uint8(val >> 32))
 			rwIndexRewrite.uint32(uint32(val))
 		}
-		bwIndexRewrite.Flush()
+		f.Write(rwIndexRewrite.Bytes())
 		f.Seek(endPos, io.SeekStart)
 	}
 

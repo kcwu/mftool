@@ -8,60 +8,56 @@ import (
 )
 
 type raw_writer struct {
-	w       io.Writer
-	scratch [8]byte
+	data []byte
 }
 
-func newRawWriter(w io.Writer) *raw_writer {
-	return &raw_writer{w: w}
+func newRawWriter() *raw_writer {
+	return &raw_writer{data: make([]byte, 0, 1024)}
+}
+
+func (w *raw_writer) Reset() {
+	w.data = w.data[:0]
+}
+
+func (w *raw_writer) Bytes() []byte {
+	return w.data
 }
 
 func (w *raw_writer) uint8(v uint8) {
-	w.scratch[0] = v
-	w.w.Write(w.scratch[:1])
+	w.data = append(w.data, v)
 }
 
 func (w *raw_writer) uint16(v uint16) {
-	binary.BigEndian.PutUint16(w.scratch[:], v)
-	w.w.Write(w.scratch[:2])
+	w.data = binary.BigEndian.AppendUint16(w.data, v)
 }
 
 func (w *raw_writer) uint32(v uint32) {
-	binary.BigEndian.PutUint32(w.scratch[:], v)
-	w.w.Write(w.scratch[:4])
+	w.data = binary.BigEndian.AppendUint32(w.data, v)
 }
 
 func (w *raw_writer) uint64(v uint64) {
-	binary.BigEndian.PutUint64(w.scratch[:], v)
-	w.w.Write(w.scratch[:8])
+	w.data = binary.BigEndian.AppendUint64(w.data, v)
 }
 
 func (w *raw_writer) int32(v int32) {
-	binary.BigEndian.PutUint32(w.scratch[:], uint32(v))
-	w.w.Write(w.scratch[:4])
+	w.data = binary.BigEndian.AppendUint32(w.data, uint32(v))
 }
 
 func (w *raw_writer) VbeU(v uint32) {
 	if v < 0x80 {
-		w.uint8(uint8(v))
+		w.data = append(w.data, uint8(v))
 		return
 	}
 
-	// Max VBE for uint32 is 5 bytes
-	var buf [5]byte
-	i := 0
 	for {
 		b := uint8(v & 0x7f)
 		v >>= 7
 		if v == 0 {
-			buf[i] = b
-			i++
+			w.data = append(w.data, b)
 			break
 		}
-		buf[i] = b | 0x80
-		i++
+		w.data = append(w.data, b|0x80)
 	}
-	w.w.Write(buf[:i])
 }
 
 func (w *raw_writer) VbeS(v int32) {
@@ -78,45 +74,37 @@ func (w *raw_writer) VbeS(v int32) {
 		if sign {
 			b |= 0x40
 		}
-		w.uint8(b)
+		w.data = append(w.data, b)
 		return
 	}
 
-	// Max VBE for int32 is 5 bytes
-	var buf [5]byte
-	i := 0
 	for {
 		if v_u < 0x40 { // fits in 6 bits
 			b := uint8(v_u)
 			if sign {
 				b |= 0x40
 			}
-			buf[i] = b
-			i++
+			w.data = append(w.data, b)
 			break
 		}
-		buf[i] = uint8(v_u&0x7f) | 0x80
-		i++
+		w.data = append(w.data, uint8(v_u&0x7f)|0x80)
 		v_u >>= 7
 	}
-	w.w.Write(buf[:i])
 }
 
 func (w *raw_writer) VbeString(s string) {
-	bs := []byte(s)
-	w.VbeU(uint32(len(bs)))
-	w.w.Write(bs)
+	w.VbeU(uint32(len(s)))
+	w.data = append(w.data, s...)
 }
 
 func (w *raw_writer) fixedString(s string, size int) {
-	bs := []byte(s)
-	if len(bs) > size {
-		bs = bs[:size]
-	}
-	w.w.Write(bs)
-	if len(bs) < size {
-		padding := make([]byte, size-len(bs))
-		w.w.Write(padding)
+	if len(s) > size {
+		w.data = append(w.data, s[:size]...)
+	} else {
+		w.data = append(w.data, s...)
+		for i := 0; i < size-len(s); i++ {
+			w.data = append(w.data, 0)
+		}
 	}
 }
 
@@ -129,15 +117,12 @@ func NewMapsforgeWriter(w io.WriteSeeker) *MapsforgeWriter {
 }
 
 func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
-	rw := newRawWriter(mw.w)
+	rw := newRawWriter()
 
 	// Magic
 	rw.fixedString(mapsforge_file_magic, 20)
 
-	// Placeholder for header size (4 bytes)
-	headerSizePos, _ := mw.w.Seek(0, io.SeekCurrent)
-	rw.uint32(0)
-
+	rw.uint32(0) // header size placeholder
 	rw.uint32(h.file_version)
 	rw.uint64(h.file_size)
 	rw.uint64(h.creation_date)
@@ -196,8 +181,10 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 	}
 
 	rw.uint8(uint8(len(h.zoom_interval)))
+	// zoomIntervalOffset := rw.Bytes()
+	// zoomIntervalPos := len(zoomIntervalOffset)
+
 	// Placeholder for zoom interval config
-	mw.w.Seek(0, io.SeekCurrent)
 	for i := 0; i < len(h.zoom_interval); i++ {
 		rw.uint8(0)  // base
 		rw.uint8(0)  // min
@@ -206,15 +193,15 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 		rw.uint64(0) // size
 	}
 
-	// Update header size
-	endHeaderPos, _ := mw.w.Seek(0, io.SeekCurrent)
-	headerSize := uint32(endHeaderPos - headerSizePos - 4)
-	mw.w.Seek(headerSizePos, io.SeekStart)
-	rw.uint32(headerSize)
-	mw.w.Seek(endHeaderPos, io.SeekStart)
+	// Calculate header size
+	headerSize := uint32(len(rw.data))
+	binary.BigEndian.PutUint32(rw.data[20:24], headerSize)
 
-	h.header_size = headerSize // cache it for later if needed
-	return nil
+	h.header_size = headerSize // cache it
+
+	// Write everything to file
+	_, err := mw.w.Write(rw.Bytes())
+	return err
 }
 
 var bufferPool = sync.Pool{
@@ -224,11 +211,7 @@ var bufferPool = sync.Pool{
 }
 
 func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
-	buf := bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufferPool.Put(buf)
-
-	rw := newRawWriter(buf)
+	rw := newRawWriter()
 
 	// In the specification, first_way_offset is relative to the byte AFTER itself.
 	// But we need to write the zoom table first.
@@ -239,27 +222,14 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 		rw.VbeU(td.tile_header.zoom_table[zi].num_ways)
 	}
 
-	// Offset to first way
-	// We'll calculate this after writing POIs
-	// Placeholder for VBE-U (max 5 bytes, let's just use a large enough temporary buffer or calculate it)
-	// Actually, let's write POIs to a separate buffer first.
-
-	poiBuf := bufferPool.Get().(*bytes.Buffer)
-	poiBuf.Reset()
-	defer bufferPool.Put(poiBuf)
-
-	poiWriter := newRawWriter(poiBuf)
+	poiWriter := newRawWriter()
 	for zi := 0; zi < zooms; zi++ {
 		for _, poi := range td.poi_data[zi] {
 			mw.writePOIData(poiWriter, &poi)
 		}
 	}
 
-	wayBuf := bufferPool.Get().(*bytes.Buffer)
-	wayBuf.Reset()
-	defer bufferPool.Put(wayBuf)
-
-	wayWriter := newRawWriter(wayBuf)
+	wayWriter := newRawWriter()
 	for zi := 0; zi < zooms; zi++ {
 		for _, way := range td.way_data[zi] {
 			mw.writeWayProperties(wayWriter, &way)
@@ -267,14 +237,11 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 	}
 
 	// Now we can write firstWayOffset
-	rw.VbeU(uint32(poiBuf.Len()))
-	buf.Write(poiBuf.Bytes())
-	buf.Write(wayBuf.Bytes())
+	rw.VbeU(uint32(len(poiWriter.data)))
+	rw.data = append(rw.data, poiWriter.data...)
+	rw.data = append(rw.data, wayWriter.data...)
 
-	// Return a copy of bytes because buffer is reused
-	res := make([]byte, buf.Len())
-	copy(res, buf.Bytes())
-	return res, nil
+	return rw.data, nil
 }
 
 func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
@@ -313,11 +280,7 @@ func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
 func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties) {
 	// We need to calculate way_data_size which excludes signature and way_data_size itself.
 	// Let's write way data to a buffer first.
-	buf := bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufferPool.Put(buf)
-
-	ww := newRawWriter(buf)
+	ww := newRawWriter()
 
 	ww.uint16(wp.sub_tile_bitmap)
 	special := uint8(wp.layer+5)<<4 | uint8(len(wp.tag_id)&0xf)
@@ -384,21 +347,14 @@ func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties) 
 		}
 	}
 
-	w.VbeU(uint32(buf.Len()))
-	w.w.Write(buf.Bytes())
+	w.VbeU(uint32(len(ww.data)))
+	w.data = append(w.data, ww.data...)
 }
 
 func (mw *MapsforgeWriter) FinalizeHeader(h *Header) error {
-	rw := newRawWriter(mw.w)
+	rw := newRawWriter()
 
-	// Go back to zoom interval config
-	// magic (20) + header size (4) + rest of header fields
-	// We need to exactly locate it.
-	// Actually it's easier to just store the position in WriteHeader.
-	// Let's re-calculate it or use a simpler approach.
-
-	// For now, let's assume we can just overwrite the whole header if we have it all.
-	mw.w.Seek(0, io.SeekStart)
+	// Magic
 	rw.fixedString(mapsforge_file_magic, 20)
 	rw.uint32(h.header_size)
 	rw.uint32(h.file_version)
@@ -468,5 +424,7 @@ func (mw *MapsforgeWriter) FinalizeHeader(h *Header) error {
 		rw.uint64(zic.size)
 	}
 
-	return nil
+	mw.w.Seek(0, io.SeekStart)
+	_, err := mw.w.Write(rw.Bytes())
+	return err
 }
