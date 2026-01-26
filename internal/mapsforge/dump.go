@@ -1,6 +1,7 @@
 package mapsforge
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 )
@@ -14,7 +15,10 @@ func CmdDump(args []string, flagHeader bool, flagAll bool, flagTile string) erro
 	}
 	defer p.Close()
 
-	dumper := NewTOMLDumper(os.Stdout)
+	bufOut := bufio.NewWriter(os.Stdout)
+	defer bufOut.Flush()
+	dumper := NewTOMLDumper(bufOut)
+	defer dumper.Flush()
 	if flagHeader || flagAll {
 		dumper.DumpHeader(&p.data.header)
 		dumper.DumpZoomIntervals(p.data.header.zoom_interval)

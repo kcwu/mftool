@@ -3,15 +3,93 @@ package mapsforge
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
 type TOMLDumper struct {
-	w io.Writer
+	w   io.Writer
+	buf []byte
 }
 
 func NewTOMLDumper(w io.Writer) *TOMLDumper {
-	return &TOMLDumper{w}
+	return &TOMLDumper{w, make([]byte, 0, 64*1024)}
+}
+
+func (d *TOMLDumper) Flush() {
+	if len(d.buf) > 0 {
+		d.w.Write(d.buf)
+		d.buf = d.buf[:0]
+	}
+}
+
+func (d *TOMLDumper) checkFlush() {
+	if len(d.buf) > 60*1024 {
+		d.Flush()
+	}
+}
+
+func (d *TOMLDumper) printStr(s string) {
+	d.buf = append(d.buf, s...)
+	d.checkFlush()
+}
+
+func (d *TOMLDumper) printInt(v int) {
+	d.buf = strconv.AppendInt(d.buf, int64(v), 10)
+	d.checkFlush()
+}
+
+func (d *TOMLDumper) printKeyInt(key string, v int) {
+	d.buf = append(d.buf, key...)
+	d.buf = append(d.buf, " = "...)
+	d.buf = strconv.AppendInt(d.buf, int64(v), 10)
+	d.buf = append(d.buf, '\n')
+	d.checkFlush()
+}
+
+func (d *TOMLDumper) printKeyInt64(key string, v int64) {
+	d.buf = append(d.buf, key...)
+	d.buf = append(d.buf, " = "...)
+	d.buf = strconv.AppendInt(d.buf, v, 10)
+	d.buf = append(d.buf, '\n')
+	d.checkFlush()
+}
+
+func (d *TOMLDumper) printKeyUint64(key string, v uint64) {
+	d.buf = append(d.buf, key...)
+	d.buf = append(d.buf, " = "...)
+	d.buf = strconv.AppendUint(d.buf, v, 10)
+	d.buf = append(d.buf, '\n')
+	d.checkFlush()
+}
+
+func (d *TOMLDumper) printKeyBool(key string, v bool) {
+	d.buf = append(d.buf, key...)
+	d.buf = append(d.buf, " = "...)
+	if v {
+		d.buf = append(d.buf, "true\n"...)
+	} else {
+		d.buf = append(d.buf, "false\n"...)
+	}
+	d.checkFlush()
+}
+
+func (d *TOMLDumper) printKeyString(key string, v string) {
+	d.buf = append(d.buf, key...)
+	d.buf = append(d.buf, " = "...)
+	// Quote allocates, but we can't avoid easily without modifying quote.
+	// For now, write internal buffer to clean up, then write string to underlying writer?
+	// OR just append if fits?
+	// s := quote(v)
+	// if len(d.buf) + len(s) + 1 > cap(d.buf) { d.Flush() }
+	// But quote loops string.
+	// Just append to buffer. If buffer overflows, it reallocs. That's bad.
+	// checkFlush logic: Flush if > 60KB.
+	// If string is huge, buffer grows. Can be fine.
+	// But let's stick to append.
+	d.buf = append(d.buf, quote(v)...)
+	d.buf = append(d.buf, '\n')
+	d.checkFlush()
 }
 
 func (d *TOMLDumper) printf(format string, args ...interface{}) {
@@ -50,107 +128,121 @@ func quote(s string) string {
 }
 
 func (d *TOMLDumper) DumpHeader(h *Header) {
-	d.printf("[header]\n")
-	d.printf("header_size = %d\n", h.header_size)
-	d.printf("file_version = %d\n", h.file_version)
-	d.printf("file_size = %d\n", h.file_size)
-	d.printf("creation_date = %d\n", h.creation_date)
-	d.printf("min_lat = %d\n", h.min.lat)
-	d.printf("min_lon = %d\n", h.min.lon)
-	d.printf("max_lat = %d\n", h.max.lat)
-	d.printf("max_lon = %d\n", h.max.lon)
-	d.printf("tile_size = %d\n", h.tile_size)
-	d.printf("projection = %s\n", quote(h.projection))
+	d.printStr("[header]\n")
+	d.printKeyUint64("header_size", uint64(h.header_size))
+	d.printKeyUint64("file_version", uint64(h.file_version))
+	d.printKeyUint64("file_size", h.file_size)
+	d.printKeyUint64("creation_date", h.creation_date)
+	d.printKeyInt("min_lat", int(h.min.lat))
+	d.printKeyInt("min_lon", int(h.min.lon))
+	d.printKeyInt("max_lat", int(h.max.lat))
+	d.printKeyInt("max_lon", int(h.max.lon))
+	d.printKeyInt("tile_size", int(h.tile_size))
+	d.printKeyString("projection", h.projection)
 
-	d.printf("has_debug = %v\n", h.has_debug)
-	d.printf("has_map_start = %v\n", h.has_map_start)
+	d.printKeyBool("has_debug", h.has_debug)
+	d.printKeyBool("has_map_start", h.has_map_start)
 	if h.has_map_start {
-		d.printf("start_lat = %d\n", h.start.lat)
-		d.printf("start_lon = %d\n", h.start.lon)
+		d.printKeyInt("start_lat", int(h.start.lat))
+		d.printKeyInt("start_lon", int(h.start.lon))
 	}
-	d.printf("has_start_zoom = %v\n", h.has_start_zoom)
+	d.printKeyBool("has_start_zoom", h.has_start_zoom)
 	if h.has_start_zoom {
-		d.printf("start_zoom = %d\n", h.start_zoom)
+		d.printKeyInt("start_zoom", int(h.start_zoom))
 	}
-	d.printf("has_language_preference = %v\n", h.has_language_preference)
+	d.printKeyBool("has_language_preference", h.has_language_preference)
 	if h.has_language_preference {
-		d.printf("language_preference = %s\n", quote(h.language_preference))
+		d.printKeyString("language_preference", h.language_preference)
 	}
-	d.printf("has_comment = %v\n", h.has_comment)
+	d.printKeyBool("has_comment", h.has_comment)
 	if h.has_comment {
-		d.printf("comment = %s\n", quote(h.comment))
+		d.printKeyString("comment", h.comment)
 	}
-	d.printf("has_created_by = %v\n", h.has_created_by)
+	d.printKeyBool("has_created_by", h.has_created_by)
 	if h.has_created_by {
-		d.printf("created_by = %s\n", quote(h.created_by))
+		d.printKeyString("created_by", h.created_by)
 	}
 
-	d.printf("\npoi_tags = [\n")
+	d.printStr("\npoi_tags = [\n")
 	for _, v := range h.poi_tags {
-		d.printf("  %s,\n", quote(v))
+		d.printStr("  ")
+		d.printStr(quote(v))
+		d.printStr(",\n")
 	}
-	d.printf("]\n")
+	d.printStr("]\n")
 
-	d.printf("\nway_tags = [\n")
+	d.printStr("\nway_tags = [\n")
 	for _, v := range h.way_tags {
-		d.printf("  %s,\n", quote(v))
+		d.printStr("  ")
+		d.printStr(quote(v))
+		d.printStr(",\n")
 	}
-	d.printf("]\n\n")
+	d.printStr("]\n\n")
 }
 
 func (d *TOMLDumper) DumpZoomIntervals(zics []ZoomIntervalConfig) {
 	for _, zic := range zics {
-		d.printf("[[zoom_intervals]]\n")
-		d.printf("base_zoom = %d\n", zic.base_zoom_level)
-		d.printf("min_zoom = %d\n", zic.min_zoom_level)
-		d.printf("max_zoom = %d\n", zic.max_zoom_level)
-		d.printf("pos = %d\n", zic.pos)
-		d.printf("size = %d\n", zic.size)
-		d.printf("\n")
+		d.printStr("[[zoom_intervals]]\n")
+		d.printKeyInt("base_zoom", int(zic.base_zoom_level))
+		d.printKeyInt("min_zoom", int(zic.min_zoom_level))
+		d.printKeyInt("max_zoom", int(zic.max_zoom_level))
+		d.printKeyUint64("pos", zic.pos)
+		d.printKeyUint64("size", zic.size)
+		d.printStr("\n")
 	}
 }
 
 func (d *TOMLDumper) DumpTile(si, x, y int, td *TileData, header *Header, isWater bool) {
-	d.printf("[[tiles]]\n")
-	d.printf("id = \"%d/%d/%d\"\n", si, x, y)
-	d.printf("si = %d\n", si)
-	d.printf("x = %d\n", x)
-	d.printf("y = %d\n", y)
-	d.printf("is_water = %v\n", isWater)
+	d.printStr("[[tiles]]\n")
+
+	// ID
+	d.buf = append(d.buf, `id = "`...)
+	d.buf = strconv.AppendInt(d.buf, int64(si), 10)
+	d.buf = append(d.buf, '/')
+	d.buf = strconv.AppendInt(d.buf, int64(x), 10)
+	d.buf = append(d.buf, '/')
+	d.buf = strconv.AppendInt(d.buf, int64(y), 10)
+	d.buf = append(d.buf, '"', '\n')
+	d.checkFlush()
+
+	d.printKeyInt("si", si)
+	d.printKeyInt("x", x)
+	d.printKeyInt("y", y)
+	d.printKeyBool("is_water", isWater)
 
 	if td == nil {
-		d.printf("# no data\n\n")
+		d.printStr("# no data\n\n")
 		return
 	}
 
-	d.printf("first_way_offset = %d\n", td.tile_header.first_way_offset)
+	d.printKeyUint64("first_way_offset", uint64(td.tile_header.first_way_offset))
 
 	// Dump POIs
 	for zi, pois := range td.poi_data {
 		for _, poi := range pois {
-			d.printf("\n[[tiles.pois]]\n")
-			d.printf("zi_index = %d\n", zi)
-			d.printf("lat = %d\n", poi.lat)
-			d.printf("lon = %d\n", poi.lon)
-			d.printf("layer = %d\n", poi.layer)
+			d.printStr("\n[[tiles.pois]]\n")
+			d.printKeyInt("zi_index", zi)
+			d.printKeyInt("lat", int(poi.lat))
+			d.printKeyInt("lon", int(poi.lon))
+			d.printKeyInt("layer", int(poi.layer))
 
-			d.printf("tags = [")
+			d.printStr("tags = [")
 			for i, tagID := range poi.tag_id {
 				if i > 0 {
-					d.printf(", ")
+					d.printStr(", ")
 				}
-				d.printf("%s", quote(header.poi_tags[tagID]))
+				d.printStr(quote(header.poi_tags[tagID]))
 			}
-			d.printf("]\n")
+			d.printStr("]\n")
 
 			if poi.has_name {
-				d.printf("name = %s\n", quote(poi.name))
+				d.printKeyString("name", poi.name)
 			}
 			if poi.has_house_number {
-				d.printf("house_number = %s\n", quote(poi.house_number))
+				d.printKeyString("house_number", poi.house_number)
 			}
 			if poi.has_elevation {
-				d.printf("elevation = %d\n", poi.elevation)
+				d.printKeyInt("elevation", int(poi.elevation))
 			}
 		}
 	}
@@ -158,53 +250,57 @@ func (d *TOMLDumper) DumpTile(si, x, y int, td *TileData, header *Header, isWate
 	// Dump Ways
 	for zi, ways := range td.way_data {
 		for _, way := range ways {
-			d.printf("\n[[tiles.ways]]\n")
-			d.printf("zi_index = %d\n", zi)
-			d.printf("layer = %d\n", way.layer)
-			d.printf("sub_tile_bitmap = %d\n", way.sub_tile_bitmap)
-			d.printf("encoding = %v\n", way.encoding)
+			d.printStr("\n[[tiles.ways]]\n")
+			d.printKeyInt("zi_index", zi)
+			d.printKeyInt("layer", int(way.layer))
+			d.printKeyInt("sub_tile_bitmap", int(way.sub_tile_bitmap))
+			d.printKeyBool("encoding", way.encoding)
 
-			d.printf("tags = [")
+			d.printStr("tags = [")
 			for i, tagID := range way.tag_id {
 				if i > 0 {
-					d.printf(", ")
+					d.printStr(", ")
 				}
-				d.printf("%s", quote(header.way_tags[tagID]))
+				d.printStr(quote(header.way_tags[tagID]))
 			}
-			d.printf("]\n")
+			d.printStr("]\n")
 
 			if way.has_name {
-				d.printf("name = %s\n", quote(way.name))
+				d.printKeyString("name", way.name)
 			}
 			if way.has_house_number {
-				d.printf("house_number = %s\n", quote(way.house_number))
+				d.printKeyString("house_number", way.house_number)
 			}
 			if way.has_reference {
-				d.printf("reference = %s\n", quote(way.reference))
+				d.printKeyString("reference", way.reference)
 			}
 			if way.has_label_position {
-				d.printf("label_lat = %d\n", way.label_position.lat)
-				d.printf("label_lon = %d\n", way.label_position.lon)
+				d.printKeyInt("label_lat", int(way.label_position.lat))
+				d.printKeyInt("label_lon", int(way.label_position.lon))
 			}
 
 			// Blocks
-			d.printf("blocks = [\n")
+			d.printStr("blocks = [\n")
 			for _, block := range way.block {
-				d.printf("  [\n")
+				d.printStr("  [\n")
 				for _, nodes := range block.data {
-					d.printf("    [")
+					d.printStr("    [")
 					for i, node := range nodes {
 						if i > 0 {
-							d.printf(", ")
+							d.printStr(", ")
 						}
-						d.printf("[%d, %d]", node.lat, node.lon)
+						d.printStr("[")
+						d.printInt(int(node.lat))
+						d.printStr(", ")
+						d.printInt(int(node.lon))
+						d.printStr("]")
 					}
-					d.printf("],\n")
+					d.printStr("],\n")
 				}
-				d.printf("  ],\n")
+				d.printStr("  ],\n")
 			}
-			d.printf("]\n")
+			d.printStr("]\n")
 		}
 	}
-	d.printf("\n")
+	d.printStr("\n")
 }
