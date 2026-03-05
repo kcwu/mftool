@@ -25,7 +25,8 @@ func CmdDump(args []string, flagHeader bool, flagAll bool, flagTile string) erro
 	}
 
 	if flagAll {
-		for si, sf := range p.data.subfiles {
+		for si := 0; si < len(p.data.subfiles); si++ {
+			sf := &p.data.subfiles[si]
 			for x := sf.x; x <= sf.X; x++ {
 				for y := sf.y; y <= sf.Y; y++ {
 					td, err := p.GetTileData(si, x, y)

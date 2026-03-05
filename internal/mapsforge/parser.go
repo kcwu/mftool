@@ -173,7 +173,8 @@ func (mp *MapsforgeParser) ParseHeader(h *Header) error {
 }
 
 func (mp *MapsforgeParser) ParseRest() error {
-	for si, sf := range mp.data.subfiles {
+	for si := 0; si < len(mp.data.subfiles); si++ {
+		sf := &mp.data.subfiles[si]
 		for x := sf.x; x <= sf.X; x++ {
 			for y := sf.y; y <= sf.Y; y++ {
 				_, err := mp.GetTileData(si, x, y)
@@ -325,7 +326,8 @@ type Tile struct {
 }
 
 func (mp *MapsforgeParser) getTiles() (result []Tile) {
-	for si, sf := range mp.data.subfiles {
+	for si := 0; si < len(mp.data.subfiles); si++ {
+		sf := &mp.data.subfiles[si]
 		len_x := int(sf.X - sf.x + 1)
 		for ti, td := range sf.tile_data {
 			x := ti % len_x
