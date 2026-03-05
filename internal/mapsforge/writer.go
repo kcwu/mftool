@@ -195,8 +195,8 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 		rw.uint64(0) // size
 	}
 
-	// Calculate header size
-	headerSize := uint32(len(rw.data))
+	// Calculate header size (excluding magic and header size field)
+	headerSize := uint32(len(rw.data) - 24)
 	binary.BigEndian.PutUint32(rw.data[20:24], headerSize)
 
 	h.header_size = headerSize // cache it
