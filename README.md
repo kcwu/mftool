@@ -87,6 +87,13 @@ Check the integrity of a map file.
 ./mftool validate file.map
 ```
 
+### Show Tag Stats
+Show statistics of tag usage.
+
+```bash
+./mftool tags input1.map [input2.map ...]
+```
+
 ### Dump Map Info
 Dump information about a map file.
 

@@ -17,6 +17,7 @@ func init() {
 var dumpCmd = &cobra.Command{
 	Use:   "dump [--header | --all | --tile si,x,y] a.map",
 	Short: "dump content of map file",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return mapsforge.CmdDump(args, flagDumpHeader, flagDumpAll, flagDumpTile)
 	},

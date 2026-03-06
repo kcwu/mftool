@@ -7,8 +7,9 @@ import (
 )
 
 var tagsCmd = &cobra.Command{
-	Use:   "tags",
+	Use:   "tags <file.map> [file.map ...]",
 	Short: "Show statistics of tag usage",
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return mapsforge.CmdTags(args)
 	},
