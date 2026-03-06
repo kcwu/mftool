@@ -96,8 +96,10 @@ func (tp *TileParser) parsePOIData(r *raw_reader, pd *POIData) error {
 	pd.layer = int8(special>>4) - 5
 	num_tag := int(special & 0xf)
 	pd.tag_id = make([]uint32, num_tag)
+	pd.tag_id_raw = make([]uint32, num_tag)
 	for ti := 0; ti < num_tag; ti++ {
 		pd.tag_id[ti] = r.VbeU()
+		pd.tag_id_raw[ti] = pd.tag_id[ti]
 	}
 
 	flags := r.uint8()
@@ -133,8 +135,10 @@ func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error
 	wp.layer = int8(special>>4) - 5
 	num_tag := int(special & 0xf)
 	wp.tag_id = make([]uint32, num_tag)
+	wp.tag_id_raw = make([]uint32, num_tag)
 	for ti := 0; ti < num_tag; ti++ {
 		wp.tag_id[ti] = r.VbeU()
+		wp.tag_id_raw[ti] = wp.tag_id[ti]
 	}
 
 	flags := r.uint8()

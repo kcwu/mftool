@@ -63,14 +63,18 @@ func make_map_stats(header *Header, tiles []Tile) *map_stats {
 	return &result
 }
 
-func CollectStatsParallel(p *MapsforgeParser) *map_stats {
+func CollectStatsParallel(p *MapsforgeParser) (*map_stats, error) {
 	numCPU := runtime.NumCPU()
 
 	type job struct {
 		si, x, y int
 	}
 	jobs := make(chan job, numCPU*4)
-	results := make(chan *map_stats, numCPU)
+	type result struct {
+		stats *map_stats
+		err   error
+	}
+	results := make(chan result, numCPU)
 
 	// Worker
 	for w := 0; w < numCPU; w++ {
@@ -80,9 +84,17 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 			stats.poi_stats.init(p.data.header.poi_tags)
 			stats.way_stats.init(p.data.header.way_tags)
 
+			var first_err error
 			for j := range jobs {
+				if first_err != nil {
+					continue
+				}
 				td, err := p.GetTileData(j.si, j.x, j.y)
-				if err != nil || td == nil {
+				if err != nil {
+					first_err = err
+					continue
+				}
+				if td == nil {
 					continue
 				}
 
@@ -107,7 +119,7 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 					}
 				}
 			}
-			results <- stats
+			results <- result{stats, first_err}
 		}()
 	}
 
@@ -128,14 +140,24 @@ func CollectStatsParallel(p *MapsforgeParser) *map_stats {
 	finalStats.poi_stats.init(p.data.header.poi_tags)
 	finalStats.way_stats.init(p.data.header.way_tags)
 
+	var first_err error
 	for w := 0; w < numCPU; w++ {
-		part := <-results
+		res := <-results
+		if res.err != nil && first_err == nil {
+			first_err = res.err
+		}
+		if first_err != nil {
+			continue
+		}
 		// Merge part into finalStats (by index)
-		merge_stats_by_index(&finalStats.poi_stats, &part.poi_stats)
-		merge_stats_by_index(&finalStats.way_stats, &part.way_stats)
+		merge_stats_by_index(&finalStats.poi_stats, &res.stats.poi_stats)
+		merge_stats_by_index(&finalStats.way_stats, &res.stats.way_stats)
 	}
 
-	return finalStats
+	if first_err != nil {
+		return nil, first_err
+	}
+	return finalStats, nil
 }
 
 func merge_stats_by_index(dst, src *TagsStat) {
@@ -293,10 +315,16 @@ func apply_mapping(p *MapsforgeParser, poi_mapping []uint32, way_mapping []uint3
 			for i, tag := range poi.tag_id {
 				poi.tag_id[i] = poi_mapping[tag]
 			}
+			for i, tag := range poi.tag_id_raw {
+				poi.tag_id_raw[i] = poi_mapping[tag]
+			}
 		}
 		for _, way := range *tile.ways {
 			for i, tag := range way.tag_id {
 				way.tag_id[i] = way_mapping[tag]
+			}
+			for i, tag := range way.tag_id_raw {
+				way.tag_id_raw[i] = way_mapping[tag]
 			}
 		}
 	}

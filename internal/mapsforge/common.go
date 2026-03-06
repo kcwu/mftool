@@ -66,8 +66,9 @@ type TileData struct {
 
 type POIData struct {
 	LatLon
-	layer  int8
-	tag_id []uint32
+	layer      int8
+	tag_id     []uint32
+	tag_id_raw []uint32
 
 	has_name         bool
 	has_house_number bool
@@ -81,6 +82,7 @@ type WayProperties struct {
 	sub_tile_bitmap uint16
 	layer           int8
 	tag_id          []uint32
+	tag_id_raw      []uint32
 
 	has_name           bool
 	has_house_number   bool

@@ -25,6 +25,7 @@ type MapsforgeParser struct {
 	reader       *raw_reader
 	data         *MapsforgeData
 	mmap         []byte
+	Strict       bool
 }
 
 func NewMapsforgeParser(r io.Reader) *MapsforgeParser {
