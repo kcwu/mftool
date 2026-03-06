@@ -74,7 +74,7 @@ func compare_way_datas(stats map_stats, z, x, y int, d1, d2 []WayProperties, det
 	return found_diff
 }
 
-func compareHeaders(h1, h2 *Header) {
+func compareHeaders(h1, h2 *Header, ignoreComment, ignoreTimestamp bool) {
 	if h1.min != h2.min {
 		fmt.Printf("Header mismatch: min %v != %v\n", h1.min, h2.min)
 	}
@@ -93,13 +93,13 @@ func compareHeaders(h1, h2 *Header) {
 	if h1.language_preference != h2.language_preference {
 		fmt.Printf("Header mismatch: language_preference %q != %q\n", h1.language_preference, h2.language_preference)
 	}
-	if h1.comment != h2.comment {
+	if !ignoreComment && h1.comment != h2.comment {
 		fmt.Printf("Header mismatch: comment %q != %q\n", h1.comment, h2.comment)
 	}
 	if h1.created_by != h2.created_by {
 		fmt.Printf("Header mismatch: created_by %q != %q\n", h1.created_by, h2.created_by)
 	}
-	if h1.creation_date != h2.creation_date {
+	if !ignoreTimestamp && h1.creation_date != h2.creation_date {
 		fmt.Printf("Header mismatch: creation_date %v != %v\n", h1.creation_date, h2.creation_date)
 	}
 }
@@ -130,7 +130,7 @@ func compareTile(stats map_stats, min_zoom_level, x, y int, t1, t2 *TileData, fl
 	}
 }
 
-func CmdDiff(args []string, flagDetail bool) error {
+func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool) error {
 	if len(args) != 2 {
 		return errors.New("only 2 arguments")
 	}
@@ -146,7 +146,7 @@ func CmdDiff(args []string, flagDetail bool) error {
 		defer p.Close()
 	}
 
-	compareHeaders(&ps[0].data.header, &ps[1].data.header)
+	compareHeaders(&ps[0].data.header, &ps[1].data.header, ignoreComment, ignoreTimestamp)
 
 	if !zic_eq(ps[0].data.header.zoom_interval, ps[1].data.header.zoom_interval) {
 		fmt.Println("Warning: zoom interval config mismatch")

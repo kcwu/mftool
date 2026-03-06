@@ -10,13 +10,17 @@ var diffCmd = &cobra.Command{
 	Use:   "diff a.map b.map",
 	Short: "compare two map files",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return mapsforge.CmdDiff(args, flagDetail)
+		return mapsforge.CmdDiff(args, flagDetail, flagIgnoreComment, flagIgnoreTimestamp)
 	},
 }
 
 var flagDetail bool
+var flagIgnoreComment bool
+var flagIgnoreTimestamp bool
 
 func init() {
 	diffCmd.Flags().BoolVar(&flagDetail, "detail", false, "show detail of diff")
+	diffCmd.Flags().BoolVar(&flagIgnoreComment, "ignore-comment", false, "ignore comment mismatch")
+	diffCmd.Flags().BoolVar(&flagIgnoreTimestamp, "ignore-timestamp", false, "ignore creation date mismatch")
 	RootCmd.AddCommand(diffCmd)
 }
