@@ -75,6 +75,7 @@ func (mp *MapsforgeParser) ParseHeader(h *Header) error {
 
 	magic := r.fixedString(20)
 	h.header_size = r.uint32()
+	startLen := len(r.buf)
 	h.file_version = r.uint32()
 	h.file_size = r.uint64()
 	h.creation_date = r.uint64()
@@ -160,6 +161,11 @@ func (mp *MapsforgeParser) ParseHeader(h *Header) error {
 
 	if magic != mapsforge_file_magic {
 		return errors.New("bad magic")
+	}
+
+	consumed := uint32(startLen - len(r.buf))
+	if consumed != h.header_size {
+		return fmt.Errorf("header_size mismatch: field says %d but actual header is %d bytes", h.header_size, consumed)
 	}
 
 	return nil

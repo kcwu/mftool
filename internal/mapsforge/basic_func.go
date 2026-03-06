@@ -185,12 +185,6 @@ func (a *WayProperties) less(b *WayProperties) bool {
 	if a.reference != b.reference {
 		return a.reference < b.reference
 	}
-	if a.has_label_position != b.has_label_position {
-		return b.has_label_position
-	}
-	if a.has_label_position && !a.label_position.eq(b.label_position) {
-		return a.label_position.less(b.label_position)
-	}
 
 	if a.num_way_block != b.num_way_block {
 		return a.num_way_block < b.num_way_block
@@ -214,6 +208,10 @@ func (a *WayProperties) less(b *WayProperties) bool {
 				}
 			}
 		}
+	}
+
+	if a.sub_tile_bitmap != b.sub_tile_bitmap {
+		return a.sub_tile_bitmap < b.sub_tile_bitmap
 	}
 
 	return false
