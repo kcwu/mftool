@@ -210,6 +210,8 @@ func LoadMapFromTOML(tomlPath, outputPath string) error {
 							has_label_position: w.LabelLat != 0 || w.LabelLon != 0,
 							label_position:     LatLon{w.LabelLat, w.LabelLon},
 							encoding:           w.Encoding,
+							has_num_way_blocks: len(w.Blocks) > 1,
+							num_way_block:      uint32(len(w.Blocks)),
 							// num_way_block, encoding derived
 						}
 
