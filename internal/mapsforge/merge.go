@@ -324,7 +324,7 @@ func mergeWorker(jobs <-chan tileJob, ps []*MapsforgeParser, outHeader *Header, 
 		if res.hasData {
 			combinedTd.normalize()
 			var err error
-			res.data, err = mw.WriteTileData(combinedTd)
+			res.data, err = mw.WriteTileData(combinedTd, job.tx, job.ty)
 			if err != nil {
 				res.err = err
 			}

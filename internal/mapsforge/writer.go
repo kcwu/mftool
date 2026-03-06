@@ -3,6 +3,7 @@ package mapsforge
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -109,11 +110,12 @@ func (w *raw_writer) fixedString(s string, size int) {
 }
 
 type MapsforgeWriter struct {
-	w io.WriteSeeker
+	w        io.WriteSeeker
+	HasDebug bool
 }
 
 func NewMapsforgeWriter(w io.WriteSeeker) *MapsforgeWriter {
-	return &MapsforgeWriter{w}
+	return &MapsforgeWriter{w: w}
 }
 
 func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
@@ -200,6 +202,7 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 	h.header_size = headerSize // cache it
 
 	// Write everything to file
+	mw.HasDebug = h.has_debug
 	_, err := mw.w.Write(rw.Bytes())
 	return err
 }
@@ -210,8 +213,12 @@ var bufferPool = sync.Pool{
 	},
 }
 
-func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
+func (mw *MapsforgeWriter) WriteTileData(td *TileData, x, y int) ([]byte, error) {
 	rw := newRawWriter()
+
+	if mw.HasDebug {
+		rw.fixedString(fmt.Sprintf("###TileStart%d,%d###", x, y), 32)
+	}
 
 	// In the specification, first_way_offset is relative to the byte AFTER itself.
 	// But we need to write the zoom table first.
@@ -224,15 +231,15 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 
 	poiWriter := newRawWriter()
 	for zi := 0; zi < zooms; zi++ {
-		for _, poi := range td.poi_data[zi] {
-			mw.writePOIData(poiWriter, &poi)
+		for i, poi := range td.poi_data[zi] {
+			mw.writePOIData(poiWriter, &poi, i)
 		}
 	}
 
 	wayWriter := newRawWriter()
 	for zi := 0; zi < zooms; zi++ {
-		for _, way := range td.way_data[zi] {
-			mw.writeWayProperties(wayWriter, &way)
+		for i, way := range td.way_data[zi] {
+			mw.writeWayProperties(wayWriter, &way, i)
 		}
 	}
 
@@ -244,7 +251,10 @@ func (mw *MapsforgeWriter) WriteTileData(td *TileData) ([]byte, error) {
 	return rw.data, nil
 }
 
-func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
+func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData, index int) {
+	if mw.HasDebug {
+		w.fixedString(fmt.Sprintf("***POIStart%d***", index), 32)
+	}
 	w.VbeS(pd.lat)
 	w.VbeS(pd.lon)
 
@@ -277,7 +287,10 @@ func (mw *MapsforgeWriter) writePOIData(w *raw_writer, pd *POIData) {
 	}
 }
 
-func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties) {
+func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties, index int) {
+	if mw.HasDebug {
+		w.fixedString(fmt.Sprintf("---WayStart%d---", index), 32)
+	}
 	// We need to calculate way_data_size which excludes signature and way_data_size itself.
 	// Let's write way data to a buffer first.
 	ww := newRawWriter()
