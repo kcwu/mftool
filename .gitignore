@@ -1,2 +1,10 @@
 /mftool
 *.map
+
+# map delta file
+*.mfd
+# go profile file
+*.prof
+
+# my local test script
+/test.sh
