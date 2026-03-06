@@ -33,10 +33,13 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	}
 
 	// 1. Merge Tags
-	// 1. Merge Tags
 	var stats []*map_stats
 	for _, p := range ps {
-		stats = append(stats, CollectStatsParallel(p))
+		s, err := CollectStatsParallel(p)
+		if err != nil {
+			return err
+		}
+		stats = append(stats, s)
 	}
 
 	merged, poiMapping, wayMapping := merge_map_tags(stats)

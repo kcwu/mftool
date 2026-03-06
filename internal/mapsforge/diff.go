@@ -13,7 +13,7 @@ func is_ignore_way(way *WayProperties, stat *TagsStat) bool {
 	return false
 }
 
-func compare_poi_datas(stats map_stats, z, x, y int, d1, d2 []POIData, detail bool) bool {
+func compare_poi_datas(stats map_stats, z, x, y int, d1, d2 []POIData, detail bool, strict bool) bool {
 	var found_diff bool
 	for i, j := 0, 0; i < len(d1) || j < len(d2); {
 		if j == len(d2) || (i < len(d1) && d1[i].less(&d2[j])) {
@@ -32,6 +32,12 @@ func compare_poi_datas(stats map_stats, z, x, y int, d1, d2 []POIData, detail bo
 			fmt.Println(z, x, y, "+poi,", d2[j].ToString(&stats.poi_stats))
 			j++
 		} else {
+			if strict && !slices_equal(d1[i].tag_id_raw, d2[j].tag_id_raw) {
+				found_diff = true
+				fmt.Println(z, x, y, "poi tag order mismatch")
+				fmt.Println("  -", d1[i].ToString(&stats.poi_stats))
+				fmt.Println("  +", d2[j].ToString(&stats.poi_stats))
+			}
 			i++
 			j++
 		}
@@ -42,7 +48,7 @@ func compare_poi_datas(stats map_stats, z, x, y int, d1, d2 []POIData, detail bo
 	return found_diff
 }
 
-func compare_way_datas(stats map_stats, z, x, y int, d1, d2 []WayProperties, detail bool) bool {
+func compare_way_datas(stats map_stats, z, x, y int, d1, d2 []WayProperties, detail bool, strict bool) bool {
 	var found_diff bool
 	for i, j := 0, 0; i < len(d1) || j < len(d2); {
 		if j == len(d2) || (i < len(d1) && d1[i].less(&d2[j])) {
@@ -62,8 +68,12 @@ func compare_way_datas(stats map_stats, z, x, y int, d1, d2 []WayProperties, det
 			fmt.Println(z, x, y, "+way", d2[j].ToString(&stats.way_stats))
 			j++
 		} else {
-			//fmt.Println("=", d1[i].ToString())
-			//fmt.Println("=", d2[j].ToString())
+			if strict && !slices_equal(d1[i].tag_id_raw, d2[j].tag_id_raw) {
+				found_diff = true
+				fmt.Println(z, x, y, "way tag order mismatch")
+				fmt.Println("  -", d1[i].ToString(&stats.way_stats))
+				fmt.Println("  +", d2[j].ToString(&stats.way_stats))
+			}
 			i++
 			j++
 		}
@@ -115,7 +125,7 @@ func compareHeaders(h1, h2 *Header, ignoreComment, ignoreTimestamp bool) bool {
 	return found_diff
 }
 
-func compareTile(stats map_stats, min_zoom_level, x, y int, t1, t2 *TileData, flagDetail bool) bool {
+func compareTile(stats map_stats, min_zoom_level, x, y int, t1, t2 *TileData, flagDetail bool, strict bool) bool {
 	if t1 == nil && t2 == nil {
 		return false
 	}
@@ -133,10 +143,10 @@ func compareTile(stats map_stats, min_zoom_level, x, y int, t1, t2 *TileData, fl
 	for zi := 0; zi < len(t1.poi_data); zi++ {
 		z := min_zoom_level + zi
 		var found_diff bool
-		if compare_poi_datas(stats, z, x, y, t1.poi_data[zi], t2.poi_data[zi], flagDetail) {
+		if compare_poi_datas(stats, z, x, y, t1.poi_data[zi], t2.poi_data[zi], flagDetail, strict) {
 			found_diff = true
 		}
-		if compare_way_datas(stats, z, x, y, t1.way_data[zi], t2.way_data[zi], flagDetail) {
+		if compare_way_datas(stats, z, x, y, t1.way_data[zi], t2.way_data[zi], flagDetail, strict) {
 			found_diff = true
 		}
 		if !flagDetail && found_diff {
@@ -149,7 +159,7 @@ func compareTile(stats map_stats, min_zoom_level, x, y int, t1, t2 *TileData, fl
 	return any_diff
 }
 
-func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool) error {
+func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool, strict bool) error {
 	if len(args) != 2 {
 		return errors.New("only 2 arguments")
 	}
@@ -165,6 +175,9 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 		defer p.Close()
 	}
 
+	ps[0].Strict = strict
+	ps[1].Strict = strict
+
 	var found_diff bool
 	if compareHeaders(&ps[0].data.header, &ps[1].data.header, ignoreComment, ignoreTimestamp) {
 		found_diff = true
@@ -178,7 +191,11 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 	// The tag_id of two map files may be different, so we need to remap them.
 	var stats []*map_stats
 	for _, p := range ps {
-		stats = append(stats, CollectStatsParallel(p))
+		s, err := CollectStatsParallel(p)
+		if err != nil {
+			return err
+		}
+		stats = append(stats, s)
 	}
 
 	merged_stats, poi_mapping, way_mapping := merge_map_tags(stats)
@@ -223,7 +240,7 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 					found_diff = true
 				}
 
-				if compareTile(merged_stats, int(sf1.zoom_interval.min_zoom_level), x, y, t1, t2, flagDetail) {
+				if compareTile(merged_stats, int(sf1.zoom_interval.min_zoom_level), x, y, t1, t2, flagDetail, strict) {
 					found_diff = true
 				}
 			}
@@ -235,4 +252,16 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 		return errors.New("files differ")
 	}
 	return nil
+}
+
+func slices_equal(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

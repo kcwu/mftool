@@ -175,6 +175,7 @@ func LoadMapFromTOML(tomlPath, outputPath string) error {
 							LatLon:           LatLon{p.Lat, p.Lon},
 							layer:            p.Layer, // int8
 							tag_id:           tags,
+							tag_id_raw:       tags,
 							has_name:         p.Name != "",
 							name:             p.Name,
 							has_house_number: p.HouseNumber != "",
@@ -201,6 +202,7 @@ func LoadMapFromTOML(tomlPath, outputPath string) error {
 							layer:              w.Layer,
 							sub_tile_bitmap:    w.SubTileBitmap,
 							tag_id:             tags,
+							tag_id_raw:         tags,
 							has_name:           w.Name != "",
 							name:               w.Name,
 							has_house_number:   w.HouseNumber != "",
