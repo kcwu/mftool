@@ -253,7 +253,7 @@ func LoadMapFromTOML(tomlPath, outputPath string) error {
 					// Normalize
 					td.normalize()
 
-					data, err := mw.WriteTileData(td)
+					data, err := mw.WriteTileData(td, tx, ty)
 					if err != nil {
 						return err
 					}
