@@ -63,29 +63,40 @@ func (w *raw_writer) VbeU(v uint32) {
 
 func (w *raw_writer) VbeS(v int32) {
 	abs_v := v
-	sign := false
+	var signBit uint8
 	if v < 0 {
 		abs_v = -v
-		sign = true
+		signBit = 0x40
 	}
 
 	v_u := uint32(abs_v)
 	if v_u < 0x40 {
-		b := uint8(v_u)
-		if sign {
-			b |= 0x40
-		}
-		w.data = append(w.data, b)
+		// 1-byte: abs < 64
+		w.data = append(w.data, uint8(v_u)|signBit)
+		return
+	}
+	if v_u < 0x2000 {
+		// 2-byte: abs in [64, 8191]
+		w.data = append(w.data,
+			uint8(v_u&0x7f)|0x80,
+			uint8(v_u>>7)|signBit,
+		)
+		return
+	}
+	if v_u < 0x100000 {
+		// 3-byte: abs in [8192, 1048575]
+		w.data = append(w.data,
+			uint8(v_u&0x7f)|0x80,
+			uint8((v_u>>7)&0x7f)|0x80,
+			uint8(v_u>>14)|signBit,
+		)
 		return
 	}
 
+	// General loop for large values (rare)
 	for {
-		if v_u < 0x40 { // fits in 6 bits
-			b := uint8(v_u)
-			if sign {
-				b |= 0x40
-			}
-			w.data = append(w.data, b)
+		if v_u < 0x40 {
+			w.data = append(w.data, uint8(v_u)|signBit)
 			break
 		}
 		w.data = append(w.data, uint8(v_u&0x7f)|0x80)
