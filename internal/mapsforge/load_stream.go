@@ -3,10 +3,12 @@ package mapsforge
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
+	"sync"
+	"syscall"
 	"unsafe"
 )
 
@@ -123,11 +125,16 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 		f.Close()
 		return nil, nil, err
 	}
-	data := make([]byte, fi.Size())
-	if _, err = io.ReadFull(f, data); err != nil {
+	size := int(fi.Size())
+	data, err := syscall.Mmap(int(f.Fd()), 0, size, syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
 		f.Close()
 		return nil, nil, err
 	}
+	// MADV_SEQUENTIAL triggers aggressive kernel read-ahead, so pages are
+	// fetched concurrently while the CPU parses earlier pages.
+	_ = syscall.Madvise(data, syscall.MADV_SEQUENTIAL)
+	defer syscall.Munmap(data)
 	f.Close()
 
 	lr := &lineReader{data: data}
@@ -194,15 +201,66 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 		}
 	}
 
-	// Encoder (no I/O, just encodes to bytes).
-	encMW := &MapsforgeWriter{HasDebug: h.has_debug}
-
 	// Allocate per-subfile storage.
 	subs := make([]subfileEncoded, len(h.zoom_interval))
 	for i := range subs {
 		subs[i].tiles = make(map[int][]byte)
 		subs[i].isWater = make(map[int]bool)
 	}
+
+	// Parallel tile encoding: parse sequentially, encode concurrently.
+	type encodeJob struct {
+		si, gridKey, x, y int
+		td                *TileData
+	}
+	type encodeResult struct {
+		si, gridKey int
+		data        []byte
+	}
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers > 8 {
+		numWorkers = 8
+	}
+	jobCh := make(chan encodeJob, numWorkers*4)
+	resultCh := make(chan encodeResult, numWorkers*4)
+
+	var workerWg sync.WaitGroup
+	hasDebug := h.has_debug
+	for i := 0; i < numWorkers; i++ {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			wMW := &MapsforgeWriter{HasDebug: hasDebug}
+			// Per-worker scratch buffer avoids pool contention for block encoding.
+			blockWW := &raw_writer{data: make([]byte, 0, 64*1024)}
+			for job := range jobCh {
+				// Encode any deferred block bytes (moved from parse goroutine).
+				for zi := range job.td.way_data {
+					for i := range job.td.way_data[zi] {
+						wp := &job.td.way_data[zi][i]
+						if wp.rawBlockBytes != nil {
+							blockWW.data = blockWW.data[:0]
+							lrBlock := &lineReader{data: wp.rawBlockBytes}
+							encodeBlocksDirect(lrBlock, blockWW)
+							wp.encodedBlocks = append([]byte(nil), blockWW.data...)
+							wp.rawBlockBytes = nil
+						}
+					}
+				}
+				data, _ := wMW.WriteTileData(job.td, job.x, job.y)
+				resultCh <- encodeResult{si: job.si, gridKey: job.gridKey, data: data}
+			}
+		}()
+	}
+
+	collectorDone := make(chan struct{})
+	go func() {
+		defer close(collectorDone)
+		for res := range resultCh {
+			subs[res.si].tiles[res.gridKey] = res.data
+		}
+	}()
 
 	// ---- Phase 2: stream-parse tiles, encode immediately ----
 
@@ -295,9 +353,7 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 					sort.Sort(Uint32Slice(ways[i].tag_id))
 				}
 			}
-			data, _ := encMW.WriteTileData(td, curX, curY)
-			subs[si].tiles[gridKey] = data
-			// Discard the TileData immediately; only keep the encoded bytes.
+			jobCh <- encodeJob{si: si, gridKey: gridKey, x: curX, y: curY, td: td}
 			curTD = nil
 		}
 
@@ -465,12 +521,9 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 				curWay.label_position.lon = int32(v)
 			case "blocks":
 				if len(val) == 1 && val[0] == '[' {
-					ww := rawWriterPool.Get().(*raw_writer)
-					ww.data = ww.data[:0]
-					n, e := encodeBlocksDirect(lr, ww)
+					raw, n, e := collectBlockRange(lr)
 					parseErr = e
-					curWay.encodedBlocks = append([]byte(nil), ww.data...)
-					rawWriterPool.Put(ww)
+					curWay.rawBlockBytes = raw
 					curWay.has_num_way_blocks = n > 1
 					curWay.num_way_block = n
 				}
@@ -482,6 +535,11 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 		}
 	}
 	finalizeTile()
+
+	close(jobCh)
+	workerWg.Wait()
+	close(resultCh)
+	<-collectorDone
 
 	return h, subs, nil
 }
@@ -808,6 +866,44 @@ func encodeSegmentIntoWriter(seg []byte, ww *raw_writer) {
 		ww.VbeS(lat)
 		ww.VbeS(lon)
 	}
+}
+
+// collectBlockRange advances lr past the multi-line blocks structure and
+// returns the raw bytes consumed (a sub-slice of lr.data) plus the block count.
+// The opening "[" line has already been consumed (value was "[").
+func collectBlockRange(lr *lineReader) ([]byte, uint32, error) {
+	startPos := lr.pos
+	var numBlocks uint32
+	depth := 1 // inside the opening '[' of the blocks array
+
+	bBlockEnd := []byte("],")
+	bEnd := []byte("]")
+	bBlockStart := []byte("[")
+
+	for {
+		line, ok := lr.next()
+		if !ok {
+			return nil, 0, fmt.Errorf("unexpected EOF in blocks")
+		}
+		trimmed := line
+		for len(trimmed) > 0 && trimmed[0] == ' ' {
+			trimmed = trimmed[1:]
+		}
+		if bytes.Equal(trimmed, bEnd) {
+			depth--
+			if depth == 0 {
+				break
+			}
+		} else if bytes.Equal(trimmed, bBlockStart) {
+			depth++
+			if depth == 2 {
+				numBlocks++
+			}
+		} else if bytes.Equal(trimmed, bBlockEnd) {
+			depth--
+		}
+	}
+	return lr.data[startPos:lr.pos], numBlocks, nil
 }
 
 // encodeBlocksDirect reads the multi-line blocks structure and encodes it
