@@ -224,6 +224,12 @@ var bufferPool = sync.Pool{
 	},
 }
 
+var rawWriterPool = sync.Pool{
+	New: func() interface{} {
+		return &raw_writer{data: make([]byte, 0, 4096)}
+	},
+}
+
 func (mw *MapsforgeWriter) WriteTileData(td *TileData, x, y int) ([]byte, error) {
 	rw := newRawWriter()
 
@@ -302,9 +308,9 @@ func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties, 
 	if mw.HasDebug {
 		w.fixedString(fmt.Sprintf("---WayStart%d---", index), 32)
 	}
-	// We need to calculate way_data_size which excludes signature and way_data_size itself.
-	// Let's write way data to a buffer first.
-	ww := newRawWriter()
+
+	ww := rawWriterPool.Get().(*raw_writer)
+	ww.data = ww.data[:0]
 
 	ww.uint16(wp.sub_tile_bitmap)
 	special := uint8(wp.layer+5)<<4 | uint8(len(wp.tag_id)&0xf)
@@ -351,17 +357,19 @@ func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties, 
 		ww.VbeU(wp.num_way_block)
 	}
 
-	// Way data blocks
+	if wp.encodedBlocks != nil {
+		// Fast path: block bytes were pre-encoded during parsing.
+		// Write total size then header + pre-encoded blocks directly.
+		w.VbeU(uint32(len(ww.data) + len(wp.encodedBlocks)))
+		w.data = append(w.data, ww.data...)
+		w.data = append(w.data, wp.encodedBlocks...)
+		rawWriterPool.Put(ww)
+		return
+	}
+
+	// Slow path: encode blocks from []WayData.
 	for _, block := range wp.block {
-		ww.VbeU(uint32(len(block.data))) // amount of way coordinate blocks
-		// Wait, parser says:
-		/*
-			num_way := r.VbeU()
-			wp.block[bi].data = make([][]LatLon, num_way)
-			for wi := uint32(0); wi < num_way; wi++ {
-				num_node := r.VbeU()
-		*/
-		// Parser treats WayData as multiple segments?
+		ww.VbeU(uint32(len(block.data)))
 		for _, nodes := range block.data {
 			ww.VbeU(uint32(len(nodes)))
 			for _, node := range nodes {
@@ -373,6 +381,7 @@ func (mw *MapsforgeWriter) writeWayProperties(w *raw_writer, wp *WayProperties, 
 
 	w.VbeU(uint32(len(ww.data)))
 	w.data = append(w.data, ww.data...)
+	rawWriterPool.Put(ww)
 }
 
 func (mw *MapsforgeWriter) FinalizeHeader(h *Header) error {

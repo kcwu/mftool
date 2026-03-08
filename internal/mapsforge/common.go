@@ -97,6 +97,10 @@ type WayProperties struct {
 	num_way_block      uint32
 
 	block []WayData
+
+	// encodedBlocks holds pre-encoded block bytes (set by the load path).
+	// When non-nil, writeWayProperties uses these directly instead of block.
+	encodedBlocks []byte
 }
 
 type WayData struct {

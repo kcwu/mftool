@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"unsafe"
 )
@@ -281,7 +282,19 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 					num_ways: uint32(len(td.way_data[zi])),
 				}
 			}
-			td.normalize()
+			// Sort tag IDs within each POI/way (cheap, nearly no-op for
+			// already-normalized dumps). Skip full normalize() since the dump
+			// preserves the original canonical POI/way order.
+			for _, pois := range td.poi_data {
+				for i := range pois {
+					sort.Sort(Uint32Slice(pois[i].tag_id))
+				}
+			}
+			for _, ways := range td.way_data {
+				for i := range ways {
+					sort.Sort(Uint32Slice(ways[i].tag_id))
+				}
+			}
 			data, _ := encMW.WriteTileData(td, curX, curY)
 			subs[si].tiles[gridKey] = data
 			// Discard the TileData immediately; only keep the encoded bytes.
@@ -452,10 +465,12 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 				curWay.label_position.lon = int32(v)
 			case "blocks":
 				if len(val) == 1 && val[0] == '[' {
-					blocks, e := parseBlocksDirect(lr)
+					ww := rawWriterPool.Get().(*raw_writer)
+					ww.data = ww.data[:0]
+					n, e := encodeBlocksDirect(lr, ww)
 					parseErr = e
-					curWay.block = blocks
-					n := uint32(len(blocks))
+					curWay.encodedBlocks = append([]byte(nil), ww.data...)
+					rawWriterPool.Put(ww)
 					curWay.has_num_way_blocks = n > 1
 					curWay.num_way_block = n
 				}
@@ -721,6 +736,157 @@ func parseSegmentDirect(s string) []LatLon {
 		nodes = append(nodes, LatLon{lat, lon})
 	}
 	return nodes
+}
+
+// encodeSegmentIntoWriter encodes one segment line "[[lat, lon], ...][,]"
+// directly into ww as VbeU(numNodes) followed by VbeS(lat) VbeS(lon) per node.
+// No []LatLon intermediate is allocated.
+func encodeSegmentIntoWriter(seg []byte, ww *raw_writer) {
+	n := len(seg)
+	if n > 0 && seg[n-1] == ',' {
+		n--
+	}
+	if n < 2 || seg[0] != '[' || seg[n-1] != ']' {
+		ww.VbeU(0)
+		return
+	}
+	inner := seg[1 : n-1]
+
+	numNodes := uint32(bytes.Count(inner, []byte("[")))
+	ww.VbeU(numNodes)
+
+	s := bstring(inner)
+	i, slen := 0, len(s)
+	for i < slen {
+		for i < slen && (s[i] == ',' || s[i] == ' ') {
+			i++
+		}
+		if i >= slen || s[i] != '[' {
+			break
+		}
+		i++
+
+		neg := false
+		if i < slen && s[i] == '-' {
+			neg = true
+			i++
+		}
+		var lat int32
+		for i < slen && s[i] >= '0' && s[i] <= '9' {
+			lat = lat*10 + int32(s[i]-'0')
+			i++
+		}
+		if neg {
+			lat = -lat
+		}
+
+		for i < slen && (s[i] == ',' || s[i] == ' ') {
+			i++
+		}
+
+		neg = false
+		if i < slen && s[i] == '-' {
+			neg = true
+			i++
+		}
+		var lon int32
+		for i < slen && s[i] >= '0' && s[i] <= '9' {
+			lon = lon*10 + int32(s[i]-'0')
+			i++
+		}
+		if neg {
+			lon = -lon
+		}
+
+		for i < slen && s[i] != ']' {
+			i++
+		}
+		if i < slen {
+			i++
+		}
+
+		ww.VbeS(lat)
+		ww.VbeS(lon)
+	}
+}
+
+// encodeBlocksDirect reads the multi-line blocks structure and encodes it
+// directly into ww as VbeS bytes, returning the number of blocks.
+// The opening "[" line has already been consumed.
+func encodeBlocksDirect(lr *lineReader, ww *raw_writer) (uint32, error) {
+	var numBlocks uint32
+
+	bBlockEnd := []byte("],")
+	bEnd := []byte("]")
+	bBlockStart := []byte("[")
+
+	for {
+		line, ok := lr.next()
+		if !ok {
+			break
+		}
+		trimmed := line
+		for len(trimmed) > 0 && trimmed[0] == ' ' {
+			trimmed = trimmed[1:]
+		}
+		if bytes.Equal(trimmed, bEnd) {
+			break
+		}
+		if bytes.Equal(trimmed, bBlockStart) {
+			numBlocks++
+			// Reserve one byte as a placeholder for VbeU(numSegments).
+			// Almost all blocks have < 128 segments so 1 byte suffices.
+			segCountPos := len(ww.data)
+			ww.data = append(ww.data, 0)
+
+			var numSegs uint32
+			for {
+				segLine, ok := lr.next()
+				if !ok {
+					break
+				}
+				segTrimmed := segLine
+				for len(segTrimmed) > 0 && segTrimmed[0] == ' ' {
+					segTrimmed = segTrimmed[1:]
+				}
+				if bytes.Equal(segTrimmed, bBlockEnd) {
+					break
+				}
+				if len(segTrimmed) > 0 && segTrimmed[0] == '[' {
+					numSegs++
+					encodeSegmentIntoWriter(segTrimmed, ww)
+				}
+			}
+
+			// Fix up numSegments varint at segCountPos.
+			if numSegs < 0x80 {
+				ww.data[segCountPos] = byte(numSegs)
+			} else {
+				// Rare: varint needs more than 1 byte; insert extra bytes.
+				var vbuf [4]byte
+				vlen := 0
+				v := numSegs
+				for {
+					b := byte(v & 0x7f)
+					v >>= 7
+					if v == 0 {
+						vbuf[vlen] = b
+						vlen++
+						break
+					}
+					vbuf[vlen] = b | 0x80
+					vlen++
+				}
+				extra := vlen - 1
+				ww.data = append(ww.data, make([]byte, extra)...)
+				copy(ww.data[segCountPos+vlen:], ww.data[segCountPos+1:])
+				copy(ww.data[segCountPos:], vbuf[:vlen])
+			}
+			continue
+		}
+		// Other lines (e.g. blank) are ignored.
+	}
+	return numBlocks, nil
 }
 
 // ---- Header/zoom field parsers ([]byte versions) ----
