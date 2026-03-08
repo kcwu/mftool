@@ -1,7 +1,6 @@
 package mapsforge
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -10,54 +9,47 @@ import (
 	"unsafe"
 )
 
-// ---- fast zero-copy line reader ----
+// ---- fast zero-copy line reader over a byte slice ----
 
-// lineReader uses bufio.Reader.ReadLine for zero-copy line reading.
-// The returned []byte is only valid until the next call.
+// lineReader is a cursor over a file loaded into memory.
+// next() returns subslices of the backing slice — valid for its lifetime.
 type lineReader struct {
-	r          *bufio.Reader
-	pending    []byte
-	hasPending bool
+	data    []byte
+	pos     int
+	pending []byte // non-nil after pushBack
 }
 
-func newLineReader(r io.Reader) *lineReader {
-	return &lineReader{r: bufio.NewReaderSize(r, 4<<20)}
-}
-
-// next returns the next line (without trailing '\n').
-// The slice is valid until the next call to next() unless pushBack was called.
+// next returns the next line (without trailing newline).
+// The returned slice is a subslice of the mmap and is stable for the mmap's lifetime.
 func (lr *lineReader) next() ([]byte, bool) {
-	if lr.hasPending {
-		b := lr.pending
-		lr.hasPending = false
-		return b, true
+	if lr.pending != nil {
+		line := lr.pending
+		lr.pending = nil
+		return line, true
 	}
-	line, isPrefix, err := lr.r.ReadLine()
-	if err != nil {
+	if lr.pos >= len(lr.data) {
 		return nil, false
 	}
-	if isPrefix {
-		// Line exceeded buffer — copy and read the rest.
-		full := make([]byte, len(line))
-		copy(full, line)
-		for isPrefix {
-			var more []byte
-			more, isPrefix, err = lr.r.ReadLine()
-			full = append(full, more...)
-			if err != nil {
-				break
-			}
-		}
-		return full, true
+	start := lr.pos
+	rest := lr.data[start:]
+	i := bytes.IndexByte(rest, '\n')
+	if i < 0 {
+		lr.pos = len(lr.data)
+		return rest, true
+	}
+	lr.pos = start + i + 1
+	line := rest[:i]
+	// Trim '\r' for Windows line endings.
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
 	}
 	return line, true
 }
 
-// pushBack saves a line to be returned by the next call to next().
-// The line is copied so the caller need not keep it alive.
+// pushBack arranges for line to be returned by the next call to next().
+// Since lines are mmap-backed slices, no copy is needed.
 func (lr *lineReader) pushBack(line []byte) {
-	lr.pending = append(lr.pending[:0], line...)
-	lr.hasPending = true
+	lr.pending = line
 }
 
 // ---- unsafe zero-copy helpers ----
@@ -125,9 +117,19 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	data := make([]byte, fi.Size())
+	if _, err = io.ReadFull(f, data); err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	f.Close()
 
-	lr := newLineReader(f)
+	lr := &lineReader{data: data}
 
 	// ---- Phase 1: parse header and zoom intervals ----
 	hdr, zics, err := parseHeaderAndZooms(lr)
@@ -204,7 +206,7 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 	// ---- Phase 2: stream-parse tiles, encode immediately ----
 
 	const (
-		secNone    = iota
+		secNone = iota
 		secTile
 		secTilePOI
 		secTileWay
@@ -387,12 +389,12 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 				curPOI.tag_id = tags
 				curPOI.tag_id_raw = tags
 			case "name":
-				s, e := strconv.Unquote(string(val))
+				s, e := strconv.Unquote(bstring(val))
 				parseErr = e
 				curPOI.has_name = true
 				curPOI.name = s
 			case "house_number":
-				s, e := strconv.Unquote(string(val))
+				s, e := strconv.Unquote(bstring(val))
 				parseErr = e
 				curPOI.has_house_number = true
 				curPOI.house_number = s
@@ -425,17 +427,17 @@ func streamParseDump(path string) (*Header, []subfileEncoded, error) {
 				curWay.tag_id = tags
 				curWay.tag_id_raw = tags
 			case "name":
-				s, e := strconv.Unquote(string(val))
+				s, e := strconv.Unquote(bstring(val))
 				parseErr = e
 				curWay.has_name = true
 				curWay.name = s
 			case "house_number":
-				s, e := strconv.Unquote(string(val))
+				s, e := strconv.Unquote(bstring(val))
 				parseErr = e
 				curWay.has_house_number = true
 				curWay.house_number = s
 			case "reference":
-				s, e := strconv.Unquote(string(val))
+				s, e := strconv.Unquote(bstring(val))
 				parseErr = e
 				curWay.has_reference = true
 				curWay.reference = s
@@ -478,7 +480,7 @@ func parseHeaderAndZooms(lr *lineReader) (*TOMLHeader, []TOMLZoomInterval, error
 	inZoom := false
 
 	const (
-		secNone         = iota
+		secNone = iota
 		secHeader
 		secZoomInterval
 	)
