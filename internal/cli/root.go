@@ -12,6 +12,7 @@ var RootCmd = &cobra.Command{
 	Use:   "mftool",
 	Short: "mftool is a tool to manipulate MapsForge map file",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		cmd.SilenceUsage = true
 		if CpuProfile != "" {
 			f, err := os.Create(CpuProfile)
 			if err != nil {
