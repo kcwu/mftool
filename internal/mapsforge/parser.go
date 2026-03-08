@@ -7,6 +7,9 @@ import (
 	"io/ioutil"
 	"os"
 	"regexp"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -172,17 +175,67 @@ func (mp *MapsforgeParser) ParseHeader(h *Header) error {
 	return nil
 }
 
+func (mp *MapsforgeParser) parseTileOnce(si, x, y int) error {
+	sf := &mp.data.subfiles[si]
+	len_x := sf.X - sf.x + 1
+	i := (x - sf.x) + len_x*(y-sf.y)
+	if sf.tile_indexes[i].Offset == sf.tile_indexes[i+1].Offset {
+		return nil
+	}
+	sf_base := sf.zoom_interval.pos
+	b := sf_base + sf.tile_indexes[i].Offset
+	e := sf_base + sf.tile_indexes[i+1].Offset
+	tdp := newTileDataParser(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
+	_, err := tdp.parse()
+	return err
+}
+
 func (mp *MapsforgeParser) ParseRest() error {
+	type job struct{ si, x, y int }
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers > 8 {
+		numWorkers = 8
+	}
+	jobCh := make(chan job, numWorkers*4)
+
+	var wg sync.WaitGroup
+	var firstErr atomic.Pointer[error]
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobCh {
+				if firstErr.Load() != nil {
+					continue
+				}
+				err := mp.parseTileOnce(j.si, j.x, j.y)
+				if err != nil {
+					e := fmt.Errorf("failed at si=%d tile=%d,%d: %w", j.si, j.x, j.y, err)
+					firstErr.CompareAndSwap(nil, &e)
+				}
+			}
+		}()
+	}
+
 	for si := 0; si < len(mp.data.subfiles); si++ {
 		sf := &mp.data.subfiles[si]
 		for x := sf.x; x <= sf.X; x++ {
 			for y := sf.y; y <= sf.Y; y++ {
-				_, err := mp.GetTileData(si, x, y)
-				if err != nil {
-					return fmt.Errorf("failed at si=%d tile=%d,%d: %w", si, x, y, err)
+				if firstErr.Load() != nil {
+					goto done
 				}
+				jobCh <- job{si, x, y}
 			}
 		}
+	}
+done:
+	close(jobCh)
+	wg.Wait()
+
+	if ep := firstErr.Load(); ep != nil {
+		return *ep
 	}
 	return nil
 }
@@ -379,6 +432,7 @@ func ParseFile(fn string, all bool) (*MapsforgeParser, error) {
 	if err != nil {
 		return nil, err
 	}
+	syscall.Madvise(data, syscall.MADV_SEQUENTIAL)
 
 	p := &MapsforgeParser{
 		file_content: data,
