@@ -185,9 +185,7 @@ func (mp *MapsforgeParser) parseTileOnce(si, x, y int) error {
 	sf_base := sf.zoom_interval.pos
 	b := sf_base + sf.tile_indexes[i].Offset
 	e := sf_base + sf.tile_indexes[i+1].Offset
-	tdp := newTileDataParser(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
-	_, err := tdp.parse()
-	return err
+	return validateTileBytes(mp.file_content[b:e], x, y, &mp.data.header, sf.zoom_interval)
 }
 
 func (mp *MapsforgeParser) ParseRest() error {
