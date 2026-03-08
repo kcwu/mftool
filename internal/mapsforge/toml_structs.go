@@ -76,8 +76,8 @@ type TOMLWay struct {
 	Name          string   `toml:"name,omitempty"`
 	HouseNumber   string   `toml:"house_number,omitempty"`
 	Reference     string   `toml:"reference,omitempty"`
-	LabelLat      int32    `toml:"label_lat,omitempty"`
-	LabelLon      int32    `toml:"label_lon,omitempty"`
+	LabelLat      *int32   `toml:"label_lat,omitempty"`
+	LabelLon      *int32   `toml:"label_lon,omitempty"`
 
 	Blocks [][][][2]int32 `toml:"blocks"` // List of blocks -> List of segments -> List of [lat, lon]
 }
