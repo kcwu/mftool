@@ -101,6 +101,10 @@ type WayProperties struct {
 	// encodedBlocks holds pre-encoded block bytes (set by the load path).
 	// When non-nil, writeWayProperties uses these directly instead of block.
 	encodedBlocks []byte
+
+	// rawBlockBytes holds the raw dump text for the blocks section.
+	// Workers encode this into encodedBlocks before calling WriteTileData.
+	rawBlockBytes []byte
 }
 
 type WayData struct {
