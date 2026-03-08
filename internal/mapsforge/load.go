@@ -7,6 +7,13 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+func derefInt32(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 func LoadMapFromTOML(tomlPath, outputPath string) error {
 	data, err := ioutil.ReadFile(tomlPath)
 	if err != nil {
@@ -209,8 +216,8 @@ func LoadMapFromTOML(tomlPath, outputPath string) error {
 							house_number:       w.HouseNumber,
 							has_reference:      w.Reference != "",
 							reference:          w.Reference,
-							has_label_position: w.LabelLat != 0 || w.LabelLon != 0,
-							label_position:     LatLon{w.LabelLat, w.LabelLon},
+							has_label_position: w.LabelLat != nil,
+							label_position:     LatLon{derefInt32(w.LabelLat), derefInt32(w.LabelLon)},
 							encoding:           w.Encoding,
 							has_num_way_blocks: len(w.Blocks) > 1,
 							num_way_block:      uint32(len(w.Blocks)),
