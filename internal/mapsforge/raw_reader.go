@@ -180,6 +180,21 @@ func (r *raw_reader) int32() int32 {
 	return int32(r.uint32())
 }
 
+func (r *raw_reader) skipBytes(n uint32) {
+	if r.err != nil {
+		return
+	}
+	if uint32(len(r.buf)) < n {
+		r.err = io.EOF
+		return
+	}
+	r.buf = r.buf[n:]
+}
+
+func (r *raw_reader) skipVbeString() {
+	r.skipBytes(r.VbeU())
+}
+
 func (r *raw_reader) uint64() uint64 {
 	if r.err != nil {
 		return 0

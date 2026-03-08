@@ -118,6 +118,125 @@ func (tp *TileParser) parsePOIData(r *raw_reader, pd *POIData) error {
 	return r.err
 }
 
+// validateTileBytes checks tile byte stream integrity without allocating result structs.
+func validateTileBytes(data []byte, x, y int, h *Header, zic *ZoomIntervalConfig) error {
+	r := newRawReader(data)
+
+	if h.has_debug {
+		sig := r.fixedString(32)
+		sm := re_tilestart.FindStringSubmatch(sig)
+		if sm == nil || sm[1] != strconv.Itoa(x) || sm[2] != strconv.Itoa(y) {
+			return fmt.Errorf("TileStart signature mismatch, expect %d,%d, actual: [%s]", x, y, sig)
+		}
+	}
+
+	zooms := int(zic.max_zoom_level-zic.min_zoom_level) + 1
+	// Use a fixed-size stack array to avoid heap allocation.
+	var zoom_table [256]TileZoomTable
+	for zi := 0; zi < zooms; zi++ {
+		zoom_table[zi].num_pois = r.VbeU()
+		zoom_table[zi].num_ways = r.VbeU()
+	}
+	r.VbeU() // first_way_offset
+	if r.err != nil {
+		return r.err
+	}
+
+	for zi := 0; zi < zooms; zi++ {
+		for i := uint32(0); i < zoom_table[zi].num_pois; i++ {
+			if err := validatePOIBytes(r, h); err != nil {
+				return err
+			}
+		}
+	}
+	for zi := 0; zi < zooms; zi++ {
+		for i := uint32(0); i < zoom_table[zi].num_ways; i++ {
+			if err := validateWayBytes(r, h); err != nil {
+				return err
+			}
+		}
+	}
+	return r.err
+}
+
+func validatePOIBytes(r *raw_reader, h *Header) error {
+	if h.has_debug {
+		sig := r.fixedString(32)
+		if !re_poistart.MatchString(sig) {
+			return errors.New("POIData signature mismatch")
+		}
+	}
+	r.VbeS() // lat
+	r.VbeS() // lon
+	special := r.uint8()
+	num_tag := int(special & 0xf)
+	for ti := 0; ti < num_tag; ti++ {
+		r.VbeU()
+	}
+	flags := r.uint8()
+	if flags>>7&1 != 0 {
+		r.skipVbeString() // name
+	}
+	if flags>>6&1 != 0 {
+		r.skipVbeString() // house_number
+	}
+	if flags>>5&1 != 0 {
+		r.VbeS() // elevation
+	}
+	return r.err
+}
+
+func validateWayBytes(r *raw_reader, h *Header) error {
+	if h.has_debug {
+		sig := r.fixedString(32)
+		if !re_waystart.MatchString(sig) {
+			return errors.New("WayProperties signature mismatch")
+		}
+	}
+	way_data_size := r.VbeU()
+	start_len := len(r.buf)
+
+	r.uint16() // sub_tile_bitmap
+	special := r.uint8()
+	num_tag := int(special & 0xf)
+	for ti := 0; ti < num_tag; ti++ {
+		r.VbeU()
+	}
+	flags := r.uint8()
+	if flags>>7&1 != 0 {
+		r.skipVbeString() // name
+	}
+	if flags>>6&1 != 0 {
+		r.skipVbeString() // house_number
+	}
+	if flags>>5&1 != 0 {
+		r.skipVbeString() // reference
+	}
+	if flags>>4&1 != 0 {
+		r.VbeS() // label lat
+		r.VbeS() // label lon
+	}
+	num_way_block := uint32(1)
+	if flags>>3&1 != 0 {
+		num_way_block = r.VbeU()
+	}
+	for bi := uint32(0); bi < num_way_block; bi++ {
+		num_way := r.VbeU()
+		for wi := uint32(0); wi < num_way; wi++ {
+			num_node := r.VbeU()
+			for ni := uint32(0); ni < num_node; ni++ {
+				r.VbeS()
+				r.VbeS()
+			}
+		}
+	}
+	consumed := start_len - len(r.buf)
+	if r.err == nil && uint32(consumed) != way_data_size {
+		return fmt.Errorf("way_data_size mismatch: expected %d, consumed %d", way_data_size, consumed)
+	}
+	return r.err
+}
+
 func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error {
 	if tp.file_header().has_debug {
 		sig := r.fixedString(32)
