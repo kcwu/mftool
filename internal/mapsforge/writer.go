@@ -1,7 +1,6 @@
 package mapsforge
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -194,8 +193,6 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 	}
 
 	rw.uint8(uint8(len(h.zoom_interval)))
-	// zoomIntervalOffset := rw.Bytes()
-	// zoomIntervalPos := len(zoomIntervalOffset)
 
 	// Placeholder for zoom interval config
 	for i := 0; i < len(h.zoom_interval); i++ {
@@ -216,12 +213,6 @@ func (mw *MapsforgeWriter) WriteHeader(h *Header) error {
 	mw.HasDebug = h.has_debug
 	_, err := mw.w.Write(rw.Bytes())
 	return err
-}
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return new(bytes.Buffer)
-	},
 }
 
 var rawWriterPool = sync.Pool{

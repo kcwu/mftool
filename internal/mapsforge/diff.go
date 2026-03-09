@@ -5,14 +5,6 @@ import (
 	"fmt"
 )
 
-func is_ignore_poi(poi *POIData) bool {
-	return false
-}
-
-func is_ignore_way(way *WayProperties, stat *TagsStat) bool {
-	return false
-}
-
 func compare_poi_datas(stats map_stats, z, x, y int, d1, d2 []POIData, detail bool, strict bool) bool {
 	var found_diff bool
 	for i, j := 0, 0; i < len(d1) || j < len(d2); {

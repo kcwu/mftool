@@ -5,13 +5,6 @@ import (
 	"os"
 )
 
-func derefInt32(p *int32) int32 {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
 func LoadMapFromTOML(tomlPath, outputPath string) error {
 	h, subs, err := streamParseDump(tomlPath)
 	if err != nil {
