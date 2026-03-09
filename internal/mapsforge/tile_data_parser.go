@@ -9,14 +9,19 @@ import (
 type TileParser struct {
 	x, y int
 
-	data   []byte
-	parent *MapsforgeParser
-	zic    *ZoomIntervalConfig
-	parsed *TileData
+	data           []byte
+	parent         *MapsforgeParser
+	zic            *ZoomIntervalConfig
+	parsed         *TileData
+	skipBlockParse bool // skip decoding coordinate blocks; stores raw bytes in encodedBlocks only
 }
 
 func newTileDataParser(x, y int, data []byte, parent *MapsforgeParser, zic *ZoomIntervalConfig) *TileParser {
-	return &TileParser{x, y, data, parent, zic, nil}
+	return &TileParser{x: x, y: y, data: data, parent: parent, zic: zic}
+}
+
+func newTileDataParserLight(x, y int, data []byte, parent *MapsforgeParser, zic *ZoomIntervalConfig) *TileParser {
+	return &TileParser{x: x, y: y, data: data, parent: parent, zic: zic, skipBlockParse: true}
 }
 
 func (tp *TileParser) file_header() *Header {
@@ -288,6 +293,22 @@ func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error
 		wp.num_way_block = 1
 	}
 
+	if tp.skipBlockParse {
+		// Light parse: skip coordinate decoding — just store raw block bytes.
+		// Used by apply path which never needs wp.block for sorting.
+		consumed_so_far := start_len - len(r.buf)
+		block_len := int(way_data_size) - consumed_so_far
+		if block_len < 0 || block_len > len(r.buf) {
+			return fmt.Errorf("way block length out of range: %d", block_len)
+		}
+		wp.encodedBlocks = r.buf[:block_len]
+		r.buf = r.buf[block_len:]
+		return r.err
+	}
+
+	// Full parse: decode coordinates into []WayData (needed for normalize/sort).
+	// Capture raw block bytes before parsing for the encodedBlocks fast path.
+	block_bytes_start := r.buf
 	wp.block = make([]WayData, wp.num_way_block)
 	for bi := uint32(0); bi < wp.num_way_block; bi++ {
 		num_way := r.VbeU()
@@ -302,6 +323,7 @@ func (tp *TileParser) parseWayProperties(r *raw_reader, wp *WayProperties) error
 			}
 		}
 	}
+	wp.encodedBlocks = block_bytes_start[:len(block_bytes_start)-len(r.buf)]
 
 	consumed := start_len - len(r.buf)
 	if uint32(consumed) != way_data_size {
