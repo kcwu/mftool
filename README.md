@@ -12,6 +12,8 @@
     - Metadata differences (header fields).
     - Tile-level differences (water flags, offsets).
     - Semantic mismatches.
+- **Delta**: Generate a compact binary diff (`.mfd`) between two map versions, encoding only changed tiles.
+- **Apply**: Reconstruct a new map by applying one or more delta files to a base map, supporting incremental map updates.
 - **Crop**: Extract a sub-region from a map file using:
     - Bounding box coordinates.
     - Center point and distance.
@@ -70,6 +72,30 @@ Options:
 - `--ignore-comment`: Ignore comment field mismatches.
 - `--ignore-timestamp`: Ignore creation date mismatches.
 - `-s`, `--strict`: Report tag ordering mismatches between files.
+
+### Generate Delta
+Generate a compact binary delta (`.mfd`) between two map versions.
+
+```bash
+./mftool delta -o output.mfd old.map new.map
+```
+
+Options:
+- `-o, --output <file>`: Output delta file (required).
+- `-f, --force`: Overwrite output file if it exists.
+
+### Apply Delta
+Reconstruct a new map by applying one or more delta files to a base map.
+
+```bash
+./mftool apply -o output.map base.map delta1.mfd [delta2.mfd ...]
+```
+
+Multiple delta files are applied in order, enabling incremental updates across several map versions.
+
+Options:
+- `-o, --output <file>`: Output map file (required).
+- `-f, --force`: Overwrite output file if it exists.
 
 ### Crop Map
 Extract a sub-region from a map file.

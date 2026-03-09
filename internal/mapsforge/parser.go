@@ -331,6 +331,68 @@ func (mp *MapsforgeParser) GetTileData(si, x, y int) (*TileData, error) {
 	return td, nil
 }
 
+// GetTileDataUncachedLight parses the tile without caching and without decoding
+// coordinate blocks (stores raw block bytes in encodedBlocks). Use this in the
+// apply path where normalization/sorting is not needed.
+func (mp *MapsforgeParser) GetTileDataUncachedLight(si, x, y int) (*TileData, error) {
+	if !(0 <= si && si < len(mp.data.subfiles)) {
+		return nil, errors.New("bad subfile index")
+	}
+	sf := &mp.data.subfiles[si]
+
+	if !(sf.x <= x && x <= sf.X && sf.y <= y && y <= sf.Y) {
+		return nil, nil
+	}
+
+	len_x := sf.X - sf.x + 1
+	i := (x - sf.x) + len_x*(y-sf.y)
+
+	if sf.tile_indexes[i].Offset == sf.tile_indexes[i+1].Offset {
+		zooms := int(sf.zoom_interval.max_zoom_level-sf.zoom_interval.min_zoom_level) + 1
+		return &TileData{
+			poi_data: make([][]POIData, zooms),
+			way_data: make([][]WayProperties, zooms),
+		}, nil
+	}
+
+	sf_base := sf.zoom_interval.pos
+	b := sf_base + sf.tile_indexes[i].Offset
+	e := sf_base + sf.tile_indexes[i+1].Offset
+	tdp := newTileDataParserLight(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
+	return tdp.parse()
+}
+
+// GetTileDataUncached parses the tile without storing it in the cache.
+// Use this for single-pass access (e.g. delta generation) to avoid GC pressure.
+func (mp *MapsforgeParser) GetTileDataUncached(si, x, y int) (*TileData, error) {
+	if !(0 <= si && si < len(mp.data.subfiles)) {
+		return nil, errors.New("bad subfile index")
+	}
+	sf := &mp.data.subfiles[si]
+
+	if !(sf.x <= x && x <= sf.X && sf.y <= y && y <= sf.Y) {
+		return nil, nil
+	}
+
+	len_x := sf.X - sf.x + 1
+	i := (x - sf.x) + len_x*(y-sf.y)
+
+	if sf.tile_indexes[i].Offset == sf.tile_indexes[i+1].Offset {
+		zooms := int(sf.zoom_interval.max_zoom_level-sf.zoom_interval.min_zoom_level) + 1
+		td := &TileData{
+			poi_data: make([][]POIData, zooms),
+			way_data: make([][]WayProperties, zooms),
+		}
+		return td, nil
+	}
+
+	sf_base := sf.zoom_interval.pos
+	b := sf_base + sf.tile_indexes[i].Offset
+	e := sf_base + sf.tile_indexes[i+1].Offset
+	tdp := newTileDataParser(x, y, mp.file_content[b:e], mp, sf.zoom_interval)
+	return tdp.parse()
+}
+
 func (mp *MapsforgeParser) GetRawTileBytes(si, x, y int) ([]byte, error) {
 	if !(0 <= si && si < len(mp.data.subfiles)) {
 		return nil, errors.New("bad subfile index")
