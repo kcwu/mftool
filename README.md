@@ -65,6 +65,12 @@ The tool reports:
 - Specific tile indices that differ in water status or data offset.
 - Detailed tag or coordinate differences if semantic checking is enabled.
 
+Options:
+- `-v`, `--verbose`: Show detailed diff output (tag and coordinate differences).
+- `--ignore-comment`: Ignore comment field mismatches.
+- `--ignore-timestamp`: Ignore creation date mismatches.
+- `-s`, `--strict`: Report tag ordering mismatches between files.
+
 ### Crop Map
 Extract a sub-region from a map file.
 
@@ -108,7 +114,6 @@ Options:
 
 ### Global Flags
 - `--cpuprofile <file>`: Write CPU profile to the specified file (useful for performance analysis).
-- `-v`, `--verbose`: Enable verbose output.
 
 ## Directory Structure
 - `cmd/mftool/`: Main entry point.

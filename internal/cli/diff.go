@@ -20,7 +20,7 @@ var flagIgnoreTimestamp bool
 var flagStrict bool
 
 func init() {
-	diffCmd.Flags().BoolVar(&flagDetail, "detail", false, "show detail of diff")
+	diffCmd.Flags().BoolVarP(&flagDetail, "verbose", "v", false, "show detail of diff")
 	diffCmd.Flags().BoolVar(&flagIgnoreComment, "ignore-comment", false, "ignore comment mismatch")
 	diffCmd.Flags().BoolVar(&flagIgnoreTimestamp, "ignore-timestamp", false, "ignore creation date mismatch")
 	diffCmd.Flags().BoolVarP(&flagStrict, "strict", "s", false, "report tag ordering mismatch between files")
