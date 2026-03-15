@@ -6,5 +6,7 @@
 # go profile file
 *.prof
 
+/testdata/gen
+
 # my local test script
 /test.sh
