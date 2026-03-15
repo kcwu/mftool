@@ -52,6 +52,11 @@ func (mp *MapsforgeParser) Parse() error {
 		return err
 	}
 
+	if uint64(len(mp.file_content)) != header.file_size {
+		return fmt.Errorf("file_size mismatch: header says %d but actual size is %d",
+			header.file_size, len(mp.file_content))
+	}
+
 	mp.data.subfiles = make([]SubFile, len(header.zoom_interval))
 	for i := 0; i < len(header.zoom_interval); i++ {
 		subfile := &mp.data.subfiles[i]
@@ -153,11 +158,13 @@ func (mp *MapsforgeParser) ParseHeader(h *Header) error {
 		if r.err != nil {
 			return r.err
 		}
-		if cf.min_zoom_level > cf.max_zoom_level {
-			return errors.New(fmt.Sprintf("%v <= %v <= %v",
+		if cf.min_zoom_level > cf.max_zoom_level ||
+			cf.base_zoom_level < cf.min_zoom_level ||
+			cf.base_zoom_level > cf.max_zoom_level {
+			return fmt.Errorf("%v <= %v <= %v",
 				cf.min_zoom_level,
 				cf.base_zoom_level,
-				cf.max_zoom_level))
+				cf.max_zoom_level)
 		}
 	}
 
@@ -270,11 +277,32 @@ func (mp *MapsforgeParser) parseSubFilePartial(r *raw_reader, h *Header, sf *Sub
 		}
 	}
 
-	// sential
+	// sentinel
 	sf.tile_indexes[len_x*len_y] = TileIndexEntry{Offset: zic.size}
 
 	if r.err != nil {
 		return r.err
+	}
+
+	// Tile data segment starts after the optional debug signature and the index.
+	tileDataStart := uint64(len_x*len_y) * 5
+	if h.has_debug {
+		tileDataStart += 16
+	}
+	for i := 0; i < len_x*len_y; i++ {
+		off := sf.tile_indexes[i].Offset
+		if off < tileDataStart {
+			return fmt.Errorf("tile index entry %d: offset %d is before tile data segment (starts at %d)",
+				i, off, tileDataStart)
+		}
+		if off > zic.size {
+			return fmt.Errorf("tile index entry %d: offset %d exceeds sub-file size %d",
+				i, off, zic.size)
+		}
+		if i > 0 && off < sf.tile_indexes[i-1].Offset {
+			return fmt.Errorf("tile index entry %d: offset %d is less than previous entry %d (non-monotonic)",
+				i, off, sf.tile_indexes[i-1].Offset)
+		}
 	}
 
 	sf.tile_data = make([]*TileData, len_x*len_y)
@@ -284,7 +312,7 @@ func (mp *MapsforgeParser) parseSubFilePartial(r *raw_reader, h *Header, sf *Sub
 
 func (mp *MapsforgeParser) GetTileData(si, x, y int) (*TileData, error) {
 	if !(0 <= si && si < len(mp.data.subfiles)) {
-		return nil, errors.New("bad subfile index")
+		return nil, nil
 	}
 	sf := &mp.data.subfiles[si]
 
@@ -336,7 +364,7 @@ func (mp *MapsforgeParser) GetTileData(si, x, y int) (*TileData, error) {
 // apply path where normalization/sorting is not needed.
 func (mp *MapsforgeParser) GetTileDataUncachedLight(si, x, y int) (*TileData, error) {
 	if !(0 <= si && si < len(mp.data.subfiles)) {
-		return nil, errors.New("bad subfile index")
+		return nil, nil
 	}
 	sf := &mp.data.subfiles[si]
 
@@ -366,7 +394,7 @@ func (mp *MapsforgeParser) GetTileDataUncachedLight(si, x, y int) (*TileData, er
 // Use this for single-pass access (e.g. delta generation) to avoid GC pressure.
 func (mp *MapsforgeParser) GetTileDataUncached(si, x, y int) (*TileData, error) {
 	if !(0 <= si && si < len(mp.data.subfiles)) {
-		return nil, errors.New("bad subfile index")
+		return nil, nil
 	}
 	sf := &mp.data.subfiles[si]
 
@@ -395,7 +423,7 @@ func (mp *MapsforgeParser) GetTileDataUncached(si, x, y int) (*TileData, error) 
 
 func (mp *MapsforgeParser) GetRawTileBytes(si, x, y int) ([]byte, error) {
 	if !(0 <= si && si < len(mp.data.subfiles)) {
-		return nil, errors.New("bad subfile index")
+		return nil, nil
 	}
 	sf := &mp.data.subfiles[si]
 

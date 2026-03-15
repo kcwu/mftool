@@ -142,11 +142,12 @@ func validateTileBytes(data []byte, x, y int, h *Header, zic *ZoomIntervalConfig
 		zoom_table[zi].num_pois = r.VbeU()
 		zoom_table[zi].num_ways = r.VbeU()
 	}
-	r.VbeU() // first_way_offset
+	first_way_offset := r.VbeU()
 	if r.err != nil {
 		return r.err
 	}
 
+	poi_start_len := len(r.buf)
 	for zi := 0; zi < zooms; zi++ {
 		for i := uint32(0); i < zoom_table[zi].num_pois; i++ {
 			if err := validatePOIBytes(r, h); err != nil {
@@ -154,6 +155,12 @@ func validateTileBytes(data []byte, x, y int, h *Header, zic *ZoomIntervalConfig
 			}
 		}
 	}
+	poi_consumed := uint32(poi_start_len - len(r.buf))
+	if r.err == nil && poi_consumed != first_way_offset {
+		return fmt.Errorf("first_way_offset mismatch: field says %d but POI data is %d bytes",
+			first_way_offset, poi_consumed)
+	}
+
 	for zi := 0; zi < zooms; zi++ {
 		for i := uint32(0); i < zoom_table[zi].num_ways; i++ {
 			if err := validateWayBytes(r, h); err != nil {
@@ -174,9 +181,15 @@ func validatePOIBytes(r *raw_reader, h *Header) error {
 	r.VbeS() // lat
 	r.VbeS() // lon
 	special := r.uint8()
+	if r.err == nil && special>>4 > 10 {
+		return fmt.Errorf("POI layer out of range: encoded value %d (valid 0..10)", special>>4)
+	}
 	num_tag := int(special & 0xf)
 	for ti := 0; ti < num_tag; ti++ {
-		r.VbeU()
+		tagID := r.VbeU()
+		if r.err == nil && tagID >= uint32(len(h.poi_tags)) {
+			return fmt.Errorf("POI tag ID %d out of range (have %d tags)", tagID, len(h.poi_tags))
+		}
 	}
 	flags := r.uint8()
 	if flags>>7&1 != 0 {
@@ -203,9 +216,15 @@ func validateWayBytes(r *raw_reader, h *Header) error {
 
 	r.uint16() // sub_tile_bitmap
 	special := r.uint8()
+	if r.err == nil && special>>4 > 10 {
+		return fmt.Errorf("way layer out of range: encoded value %d (valid 0..10)", special>>4)
+	}
 	num_tag := int(special & 0xf)
 	for ti := 0; ti < num_tag; ti++ {
-		r.VbeU()
+		tagID := r.VbeU()
+		if r.err == nil && tagID >= uint32(len(h.way_tags)) {
+			return fmt.Errorf("way tag ID %d out of range (have %d tags)", tagID, len(h.way_tags))
+		}
 	}
 	flags := r.uint8()
 	if flags>>7&1 != 0 {
