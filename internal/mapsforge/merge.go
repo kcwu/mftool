@@ -407,17 +407,27 @@ func mergeWorker(jobs <-chan tileJob, ps []*MapsforgeParser, outHeader *Header, 
 				}
 				res.hasData = true
 
+				// The input subfile may have a different zoom range than the
+				// output subfile, so map output zoom index zi to input zoom index.
+				outMinZoom := int(outHeader.zoom_interval[job.si].min_zoom_level)
+				inMinZoom := int(p.data.header.zoom_interval[psi].min_zoom_level)
+				inZooms := len(td.poi_data)
+
 				// Merge td into combinedTd
 				for zi := 0; zi < zooms; zi++ {
-					combinedTd.tile_header.zoom_table[zi].num_pois += uint32(len(td.poi_data[zi]))
-					combinedTd.tile_header.zoom_table[zi].num_ways += uint32(len(td.way_data[zi]))
+					inZi := zi + (outMinZoom - inMinZoom)
+					if inZi < 0 || inZi >= inZooms {
+						continue
+					}
+					combinedTd.tile_header.zoom_table[zi].num_pois += uint32(len(td.poi_data[inZi]))
+					combinedTd.tile_header.zoom_table[zi].num_ways += uint32(len(td.way_data[inZi]))
 
-					for _, poi := range td.poi_data[zi] {
+					for _, poi := range td.poi_data[inZi] {
 						newPoi := poi
 						newPoi.tag_id = remap_tags(poi.tag_id, poiMapping[ip])
 						combinedTd.poi_data[zi] = append(combinedTd.poi_data[zi], newPoi)
 					}
-					for _, way := range td.way_data[zi] {
+					for _, way := range td.way_data[inZi] {
 						newWay := way
 						newWay.tag_id = remap_tags(way.tag_id, wayMapping[ip])
 						combinedTd.way_data[zi] = append(combinedTd.way_data[zi], newWay)
