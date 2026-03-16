@@ -46,16 +46,30 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	mergedPoiTags := merged.poi_stats
 	mergedWayTags := merged.way_stats
 
-	// 2. Combine Bounding Box (union only over files that share a zoom interval)
+	// 2. Combine Bounding Box.
+	// Only include a file's bbox if it has actual tile data for at least one
+	// of the output zoom intervals. Files with no data (empty subfiles) must
+	// not inflate the header bbox, because the header bbox determines each
+	// subfile's tile index size.
 	outHeader := ps[0].data.header
 	{
-		// Compute the union only across files that contribute to at least one
-		// of the output zoom intervals, so a world-bbox file whose zoom levels
-		// don't appear in the output doesn't inflate the tile index.
+		anyDataInP0 := false
+		for si := range outHeader.zoom_interval {
+			psi := findSubFileByZoom(ps[0], outHeader.zoom_interval[si].base_zoom_level)
+			if psi != -1 && subfileHasData(ps[0], psi) {
+				anyDataInP0 = true
+				break
+			}
+		}
+		if !anyDataInP0 {
+			outHeader.min = LatLon{lat: 1<<31 - 1, lon: 1<<31 - 1}
+			outHeader.max = LatLon{lat: -1 << 31, lon: -1 << 31}
+		}
 		for si := range outHeader.zoom_interval {
 			baseZoom := outHeader.zoom_interval[si].base_zoom_level
 			for i := 1; i < len(ps); i++ {
-				if findSubFileByZoom(ps[i], baseZoom) == -1 {
+				psi := findSubFileByZoom(ps[i], baseZoom)
+				if psi == -1 || !subfileHasData(ps[i], psi) {
 					continue
 				}
 				h := ps[i].data.header
@@ -72,6 +86,11 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 					outHeader.max.lon = h.max.lon
 				}
 			}
+		}
+		// If no input has any data at all, fall back to ps[0]'s original bbox.
+		if outHeader.min.lat > outHeader.max.lat {
+			outHeader.min = ps[0].data.header.min
+			outHeader.max = ps[0].data.header.max
 		}
 	}
 
@@ -112,14 +131,17 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		zic := &outHeader.zoom_interval[si]
 		baseZoom := zic.base_zoom_level
 
-		// Union bbox restricted to files that contribute to this zoom interval.
-		siMin := outHeader.min
-		siMax := outHeader.max
-		for i := 1; i < len(ps); i++ {
-			if findSubFileByZoom(ps[i], baseZoom) == -1 {
+		// Union bbox restricted to files that actually have tile data for this
+		// zoom interval. A file with an empty subfile (all tile offsets equal)
+		// contributes no data, so its bbox must not inflate the tile index.
+		siMin := LatLon{lat: 1<<31 - 1, lon: 1<<31 - 1}
+		siMax := LatLon{lat: -1 << 31, lon: -1 << 31}
+		for _, p := range ps {
+			psi := findSubFileByZoom(p, baseZoom)
+			if psi == -1 || !subfileHasData(p, psi) {
 				continue
 			}
-			h := ps[i].data.header
+			h := p.data.header
 			if h.min.lat < siMin.lat {
 				siMin.lat = h.min.lat
 			}
@@ -133,11 +155,44 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 				siMax.lon = h.max.lon
 			}
 		}
+		// If no file has any data for this zoom interval, use ps[0]'s bbox
+		// as a minimal valid range (produces an empty subfile).
+		if siMin.lat > siMax.lat {
+			siMin = ps[0].data.header.min
+			siMax = ps[0].data.header.max
+		}
 
 		x, Y := siMin.ToXY(baseZoom)
 		X, y := siMax.ToXY(baseZoom)
 		len_x := X - x + 1
 		len_y := Y - y + 1
+
+		// Pre-compute each input's tile range at this base zoom so we can
+		// skip tiles that no input file covers without touching the worker pool.
+		type tileRange struct{ x0, x1, y0, y1 int }
+		var inputRanges []tileRange
+		for _, p := range ps {
+			psi := findSubFileByZoom(p, baseZoom)
+			if psi == -1 {
+				inputRanges = append(inputRanges, tileRange{-1, -1, -1, -1})
+				continue
+			}
+			h := p.data.header
+			px, pY := h.min.ToXY(baseZoom)
+			pX, py := h.max.ToXY(baseZoom)
+			inputRanges = append(inputRanges, tileRange{px, pX, py, pY})
+		}
+		tileInAnyInput := func(tx, ty int) bool {
+			for _, r := range inputRanges {
+				if r.x0 < 0 {
+					continue
+				}
+				if tx >= r.x0 && tx <= r.x1 && ty >= r.y0 && ty <= r.y1 {
+					return true
+				}
+			}
+			return false
+		}
 
 		// SubFile start position
 		pos, _ := f.Seek(0, io.SeekCurrent)
@@ -174,15 +229,19 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 			for tx := x; tx <= X; tx++ {
 				idx := (tx - x) + len_x*(ty-y)
 
-				resCh := make(chan tileResult, 1)
-				resultQueue = append(resultQueue, resCh)
-
 				shouldProcess := true
 				if flagTile != "" {
 					if si != targetSi || tx != targetX || ty != targetY {
 						shouldProcess = false
 					}
+				} else if !tileInAnyInput(tx, ty) {
+					// tile is outside every input's bbox: skip worker entirely
+					indexEntries[idx] = TileIndexEntry{}
+					continue
 				}
+
+				resCh := make(chan tileResult, 1)
+				resultQueue = append(resultQueue, resCh)
 
 				if shouldProcess {
 					jobs <- tileJob{
@@ -244,6 +303,20 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		err = bw.Flush()
 		if err != nil {
 			return err
+		}
+
+		// Fix up skipped-tile index entries (Offset==0 means "skipped").
+		// Tile data always starts after the index, so offset 0 is never valid
+		// for real data. Propagate the next valid offset backward so that
+		// adjacent equal offsets correctly signal an empty tile.
+		finalOffset := (uint64(startTileDataPos) - zic.pos) + currentBytesWritten
+		lastOffset := finalOffset
+		for i := len(indexEntries) - 1; i >= 0; i-- {
+			if indexEntries[i].Offset == 0 {
+				indexEntries[i].Offset = lastOffset
+			} else {
+				lastOffset = indexEntries[i].Offset
+			}
 		}
 
 		endPos, _ := f.Seek(0, io.SeekCurrent)
@@ -384,6 +457,12 @@ func remap_tags(tags []uint32, mapping []uint32) []uint32 {
 		res[i] = mapping[t]
 	}
 	return res
+}
+
+func subfileHasData(p *MapsforgeParser, psi int) bool {
+	sf := &p.data.subfiles[psi]
+	n := len(sf.tile_indexes)
+	return n >= 2 && sf.tile_indexes[0].Offset != sf.tile_indexes[n-1].Offset
 }
 
 func findSubFileByZoom(p *MapsforgeParser, baseZoom uint8) int {

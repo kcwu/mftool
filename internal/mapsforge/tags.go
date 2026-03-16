@@ -123,12 +123,17 @@ func CollectStatsParallel(p *MapsforgeParser) (*map_stats, error) {
 		}()
 	}
 
-	// Dispatcher
+	// Dispatcher — skip empty tiles (consecutive equal offsets) up front
+	// to avoid flooding the channel with millions of no-op jobs.
 	go func() {
 		for si := 0; si < len(p.data.subfiles); si++ {
 			sf := &p.data.subfiles[si]
 			for x := sf.x; x <= sf.X; x++ {
 				for y := sf.y; y <= sf.Y; y++ {
+					i := sf.TileIndex(x, y)
+					if sf.tile_indexes[i].Offset == sf.tile_indexes[i+1].Offset {
+						continue
+					}
 					jobs <- job{si, x, y}
 				}
 			}
