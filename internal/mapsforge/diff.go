@@ -176,8 +176,8 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 	}
 
 	if !zic_eq(ps[0].data.header.zoom_interval, ps[1].data.header.zoom_interval) {
-		fmt.Println("Warning: zoom interval config mismatch")
-		found_diff = true
+		fmt.Println("Warning: zoom interval config mismatch — skipping tile comparison")
+		return errors.New("files differ")
 	}
 
 	// The tag_id of two map files may be different, so we need to remap them.
