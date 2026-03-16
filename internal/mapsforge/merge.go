@@ -46,21 +46,32 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 	mergedPoiTags := merged.poi_stats
 	mergedWayTags := merged.way_stats
 
-	// 2. Combine Bounding Box
+	// 2. Combine Bounding Box (union only over files that share a zoom interval)
 	outHeader := ps[0].data.header
-	for i := 1; i < len(ps); i++ {
-		h := ps[i].data.header
-		if h.min.lat < outHeader.min.lat {
-			outHeader.min.lat = h.min.lat
-		}
-		if h.min.lon < outHeader.min.lon {
-			outHeader.min.lon = h.min.lon
-		}
-		if h.max.lat > outHeader.max.lat {
-			outHeader.max.lat = h.max.lat
-		}
-		if h.max.lon > outHeader.max.lon {
-			outHeader.max.lon = h.max.lon
+	{
+		// Compute the union only across files that contribute to at least one
+		// of the output zoom intervals, so a world-bbox file whose zoom levels
+		// don't appear in the output doesn't inflate the tile index.
+		for si := range outHeader.zoom_interval {
+			baseZoom := outHeader.zoom_interval[si].base_zoom_level
+			for i := 1; i < len(ps); i++ {
+				if findSubFileByZoom(ps[i], baseZoom) == -1 {
+					continue
+				}
+				h := ps[i].data.header
+				if h.min.lat < outHeader.min.lat {
+					outHeader.min.lat = h.min.lat
+				}
+				if h.min.lon < outHeader.min.lon {
+					outHeader.min.lon = h.min.lon
+				}
+				if h.max.lat > outHeader.max.lat {
+					outHeader.max.lat = h.max.lat
+				}
+				if h.max.lon > outHeader.max.lon {
+					outHeader.max.lon = h.max.lon
+				}
+			}
 		}
 	}
 
@@ -101,8 +112,30 @@ func MergeMaps(inputPaths []string, outputPath string, flagTile string) error {
 		zic := &outHeader.zoom_interval[si]
 		baseZoom := zic.base_zoom_level
 
-		x, Y := outHeader.min.ToXY(baseZoom)
-		X, y := outHeader.max.ToXY(baseZoom)
+		// Union bbox restricted to files that contribute to this zoom interval.
+		siMin := outHeader.min
+		siMax := outHeader.max
+		for i := 1; i < len(ps); i++ {
+			if findSubFileByZoom(ps[i], baseZoom) == -1 {
+				continue
+			}
+			h := ps[i].data.header
+			if h.min.lat < siMin.lat {
+				siMin.lat = h.min.lat
+			}
+			if h.min.lon < siMin.lon {
+				siMin.lon = h.min.lon
+			}
+			if h.max.lat > siMax.lat {
+				siMax.lat = h.max.lat
+			}
+			if h.max.lon > siMax.lon {
+				siMax.lon = h.max.lon
+			}
+		}
+
+		x, Y := siMin.ToXY(baseZoom)
+		X, y := siMax.ToXY(baseZoom)
 		len_x := X - x + 1
 		len_y := Y - y + 1
 
