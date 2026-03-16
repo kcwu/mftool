@@ -191,6 +191,22 @@ func insertionSortU32(a []uint32) {
 	}
 }
 
+// vbeStringsRawEqual reads a length-prefixed string from each reader and compares
+// the raw bytes without allocating a Go string.
+func vbeStringsRawEqual(r1, r2 *raw_reader) bool {
+	n1 := r1.VbeU()
+	n2 := r2.VbeU()
+	if n1 != n2 || int(n1) > len(r1.buf) || int(n2) > len(r2.buf) {
+		r1.buf = r1.buf[min(int(n1), len(r1.buf)):]
+		r2.buf = r2.buf[min(int(n2), len(r2.buf)):]
+		return false
+	}
+	eq := bytes.Equal(r1.buf[:n1], r2.buf[:n2])
+	r1.buf = r1.buf[n1:]
+	r2.buf = r2.buf[n2:]
+	return eq
+}
+
 // streamPOIEqualUnordered is like streamPOIEqual but handles arbitrary tag ordering
 // within each element. Tags are read into stack arrays, sorted, then compared.
 // Zero heap allocation; safe because numTag <= 15 (4-bit field).
@@ -236,12 +252,12 @@ func streamPOIEqualUnordered(r1, r2 *raw_reader, poiMap []uint32) bool {
 		return false
 	}
 	if fl1>>7&1 != 0 { // has_name
-		if r1.VbeString() != r2.VbeString() {
+		if !vbeStringsRawEqual(r1, r2) {
 			return false
 		}
 	}
 	if fl1>>6&1 != 0 { // has_house_number
-		if r1.VbeString() != r2.VbeString() {
+		if !vbeStringsRawEqual(r1, r2) {
 			return false
 		}
 	}
@@ -301,17 +317,17 @@ func streamWayEqualUnordered(r1, r2 *raw_reader, wayMap []uint32) bool {
 		return false
 	}
 	if fl1>>7&1 != 0 { // has_name
-		if r1.VbeString() != r2.VbeString() {
+		if !vbeStringsRawEqual(r1, r2) {
 			return false
 		}
 	}
 	if fl1>>6&1 != 0 { // has_house_number
-		if r1.VbeString() != r2.VbeString() {
+		if !vbeStringsRawEqual(r1, r2) {
 			return false
 		}
 	}
 	if fl1>>5&1 != 0 { // has_reference
-		if r1.VbeString() != r2.VbeString() {
+		if !vbeStringsRawEqual(r1, r2) {
 			return false
 		}
 	}
@@ -522,6 +538,9 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 	// Direct mappings ps[0]→ps[1] for fast-path comparisons.
 	poi_direct := buildTagMapByString(ps[0].data.header.poi_tags, ps[1].data.header.poi_tags)
 	way_direct := buildTagMapByString(ps[0].data.header.way_tags, ps[1].data.header.way_tags)
+	// Proposal D: hoist identity check — computed once, not per tile.
+	poiIdentity := isIdentityMapping(poi_direct)
+	wayIdentity := isIdentityMapping(way_direct)
 
 	max_si := min(len(ps[0].data.subfiles), len(ps[1].data.subfiles))
 	for si := 0; si < max_si; si++ {
@@ -566,20 +585,15 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 				}
 
 				// Proposal 1: byte equality fast path (identity mapping).
-				if b1 != nil && isIdentityMapping(poi_direct) && isIdentityMapping(way_direct) && bytes.Equal(b1, b2) {
+				if b1 != nil && poiIdentity && wayIdentity && bytes.Equal(b1, b2) {
 					continue
 				}
 
-				// Proposal 2: streaming comparison (handles tag renumbering, zero allocations).
-				// Try the ordered variant first (cheaper), then the unordered variant which
-				// handles arbitrary tag ordering within elements (e.g. after dump→load).
-				if b1 != nil && b2 != nil && sameZoomRange {
-					if streamTilesEqual(b1, b2, poi_direct, way_direct, &ps[0].data.header, zic2) {
-						continue
-					}
-					if streamTilesEqualUnordered(b1, b2, poi_direct, way_direct, &ps[0].data.header, zic2) {
-						continue
-					}
+				// Proposal 2: streaming comparison (handles tag renumbering and arbitrary
+				// tag ordering within elements, zero allocations).
+				if b1 != nil && b2 != nil && sameZoomRange &&
+					streamTilesEqualUnordered(b1, b2, poi_direct, way_direct, &ps[0].data.header, zic2) {
+					continue
 				}
 
 				// Proposal 6: light parse — confirm equality without coordinate (VbeS) decoding.
