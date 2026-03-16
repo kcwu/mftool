@@ -48,7 +48,6 @@ func LoadMapFromTOML(tomlPath, outputPath string) error {
 			rw.fixedString("+++IndexStart+++", 16)
 			f.Write(rw.Bytes())
 			sfStartPos += int64(len(rw.Bytes()))
-			zic.pos = uint64(sfStartPos)
 		}
 
 		// Write placeholder index; overwrite at end.
