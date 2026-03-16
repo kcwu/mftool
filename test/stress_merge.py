@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Stress test: run delta→apply→validate→diff for map file chains.
+"""Stress test: merge two random map files, then validate the result.
 
 Default mode: exhaustive (i, j) pairs of all .map files.
-With --random -n N: repeatedly pick N random files, build a delta chain,
-and apply all N-1 deltas in one apply invocation.
+With --random -n N: repeatedly pick 2 files at random and merge them.
 """
 
 import argparse
@@ -38,41 +37,22 @@ def run(args):
     return result.returncode, result.stdout
 
 
-def run_chain(i, files, tmp_dir):
-    """Run delta chain → apply → validate → diff for a sequence of N files.
+def run_merge(i, files, tmp_dir):
+    """Merge two map files and validate the result.
 
-    Computes N-1 deltas (files[k] → files[k+1]) then applies them all at once
-    to files[0], producing a result that should equal files[-1].
     Returns (i, label, error_log_or_None).
     """
     if stop_event.is_set():
         return i, None, None
 
-    label = " → ".join(os.path.basename(f) for f in files)
-    delta_files = [os.path.join(tmp_dir, f"{i}_d{k}.mfd") for k in range(len(files) - 1)]
-    result_map = os.path.join(tmp_dir, f"{i}_result.map")
+    label = " + ".join(os.path.basename(f) for f in files)
+    result_map = os.path.join(tmp_dir, f"{i}_merged.map")
 
     log_lines = [f"=== FAILED: {label} ==="]
 
-    # Build delta chain
-    for k in range(len(files) - 1):
-        cmd = [MFTOOL, "delta", "-f", "-o", delta_files[k], files[k], files[k + 1]]
-        if stop_event.is_set():
-            return i, None, None
-        rc, output = run(cmd)
-        log_lines.append(f"--- delta[{k}]: {' '.join(cmd)} ---")
-        if output.strip():
-            log_lines.append(output.rstrip())
-        if rc != 0:
-            log_lines.append(f"(exit code {rc})")
-            return i, label, "\n".join(log_lines)
-
-    # Apply all deltas in one shot
     for step_name, cmd in [
-        ("apply",    [MFTOOL, "apply", "-f", "-o", result_map, files[0]] + delta_files),
+        ("merge",    [MFTOOL, "merge", "-f", "-o", result_map] + files),
         ("validate", [MFTOOL, "validate", result_map]),
-        ("diff",     [MFTOOL, "diff", "--ignore-comment", "--ignore-timestamp",
-                      files[-1], result_map]),
     ]:
         if stop_event.is_set():
             return i, None, None
@@ -93,11 +73,9 @@ def main():
     parser.add_argument("--skip", type=int, default=0, metavar="K",
                         help="skip the first K jobs")
     parser.add_argument("--random", action="store_true",
-                        help="random mode: repeatedly pick N files at random")
-    parser.add_argument("-n", type=int, default=2, metavar="N",
-                        help="chain length for random mode (default: 2)")
+                        help="random mode: repeatedly pick 2 files at random")
     parser.add_argument("--rounds", type=int, default=100, metavar="R",
-                        help="number of random chains to run (default: 100)")
+                        help="number of random merges to run (default: 100)")
     parser.add_argument("--seed", type=int, default=None, metavar="S",
                         help="random seed for reproducibility")
     args = parser.parse_args()
@@ -108,28 +86,24 @@ def main():
         sys.exit(1)
 
     if args.random:
-        if args.n < 2:
-            emit("Error: -n must be >= 2")
-            sys.exit(1)
-        if args.n > len(map_files):
-            emit(f"Error: -n {args.n} exceeds number of map files ({len(map_files)})")
+        if len(map_files) < 2:
+            emit(f"Error: need at least 2 map files, found {len(map_files)}")
             sys.exit(1)
         rng = random.Random(args.seed)
         if args.skip:
-            emit(f"Skipping first {args.skip} chains.")
+            emit(f"Skipping first {args.skip} merges.")
             for _ in range(args.skip):
-                rng.sample(map_files, args.n)
-        jobs = (rng.sample(map_files, args.n) for _ in range(args.rounds - args.skip))
+                rng.sample(map_files, 2)
+        jobs = (rng.sample(map_files, 2) for _ in range(args.rounds - args.skip))
         total = args.rounds - args.skip
-        emit(f"Random mode: {args.rounds} chains of length {args.n} "
-             f"from {len(map_files)} map files "
+        emit(f"Random mode: {args.rounds} merges from {len(map_files)} map files "
              f"(seed={args.seed})\n")
     else:
-        pairs = [(s, d) for s in map_files for d in map_files]
+        pairs = [(a, b) for a in map_files for b in map_files]
         if args.skip:
             emit(f"Skipping first {args.skip} pairs.")
             pairs = pairs[args.skip:]
-        jobs = [[s, d] for s, d in pairs]
+        jobs = [[a, b] for a, b in pairs]
         total = len(jobs)
         names = [os.path.basename(f) for f in map_files]
         emit(f"Found {len(map_files)} map files: {', '.join(names)}")
@@ -148,8 +122,8 @@ def main():
             def fill_queue():
                 while len(pending) < max_workers * 2:
                     try:
-                        i, chain = next(job_iter)
-                        pending.add(pool.submit(run_chain, i, chain, tmp_dir))
+                        i, pair = next(job_iter)
+                        pending.add(pool.submit(run_merge, i, pair, tmp_dir))
                     except StopIteration:
                         break
 
@@ -184,10 +158,10 @@ def main():
 
     emit("")
     if failed:
-        emit(f"FAILED after {completed}/{total} {'chains' if args.random else 'pairs'}.")
+        emit(f"FAILED after {completed}/{total} {'merges' if args.random else 'pairs'}.")
         sys.exit(1)
     else:
-        emit(f"All {completed} {'chains' if args.random else 'pairs'} passed.")
+        emit(f"All {completed} {'merges' if args.random else 'pairs'} passed.")
 
 
 if __name__ == "__main__":
