@@ -4,8 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/maphash"
+	"io"
 	"sort"
 )
+
+// fingerprintSeed is a per-process seed for block byte hashing. Consistent
+// within a single run (both files see the same seed), so comparisons are valid.
+var fingerprintSeed = maphash.MakeSeed()
 
 func compare_poi_datas(stats map_stats, z, x, y int, d1, d2 []POIData, detail bool, strict bool) bool {
 	var found_diff bool
@@ -402,6 +408,231 @@ func streamTilesEqualUnordered(b1, b2 []byte, poiMap, wayMap []uint32, h1 *Heade
 	return r1.err == nil && r2.err == nil
 }
 
+// FNV-1a 64-bit constants.
+const (
+	fnvOffset64 uint64 = 14695981039346656037
+	fnvPrime64  uint64 = 1099511628211
+)
+
+func fnvByte(h uint64, b byte) uint64   { return (h ^ uint64(b)) * fnvPrime64 }
+func fnvU32(h uint64, v uint32) uint64  { return fnvByte(fnvByte(fnvByte(fnvByte(h, byte(v)), byte(v>>8)), byte(v>>16)), byte(v>>24)) }
+func fnvI32(h uint64, v int32) uint64   { return fnvU32(h, uint32(v)) }
+func fnvU16(h uint64, v uint16) uint64  { return fnvByte(fnvByte(h, byte(v)), byte(v>>8)) }
+func fnvSlice(h uint64, b []byte) uint64 {
+	for _, c := range b {
+		h = fnvByte(h, c)
+	}
+	return h
+}
+
+// fnvVbeStr reads a length-prefixed string from r and folds it into h.
+func fnvVbeStr(h uint64, r *raw_reader) uint64 {
+	n := r.VbeU()
+	if r.err != nil || int(n) > len(r.buf) {
+		if r.err == nil {
+			r.err = io.EOF
+		}
+		return h
+	}
+	h = fnvU32(h, n)
+	h = fnvSlice(h, r.buf[:n])
+	r.buf = r.buf[n:]
+	return h
+}
+
+// poiFingerprint hashes a single POI record from r. Tags from r are remapped
+// through tagMap (nil = identity). Returns (hash, true) or (0, false) on error.
+func poiFingerprint(r *raw_reader, tagMap []uint32) (uint64, bool) {
+	lat := r.VbeS()
+	lon := r.VbeS()
+	sp := r.uint8()
+	layer := sp >> 4
+	numTag := int(sp & 0xf)
+	var tags [16]uint32
+	for ti := 0; ti < numTag; ti++ {
+		t := r.VbeU()
+		if r.err != nil {
+			return 0, false
+		}
+		if tagMap != nil {
+			if int(t) >= len(tagMap) || tagMap[t] == tagNotFound {
+				return 0, false
+			}
+			tags[ti] = tagMap[t]
+		} else {
+			tags[ti] = t
+		}
+	}
+	insertionSortU32(tags[:numTag])
+	fl := r.uint8()
+	if r.err != nil {
+		return 0, false
+	}
+	h := fnvOffset64
+	h = fnvI32(h, lat)
+	h = fnvI32(h, lon)
+	h = fnvByte(h, layer)
+	h = fnvByte(h, byte(numTag))
+	for ti := 0; ti < numTag; ti++ {
+		h = fnvU32(h, tags[ti])
+	}
+	h = fnvByte(h, fl)
+	if fl>>7&1 != 0 {
+		h = fnvVbeStr(h, r)
+	}
+	if fl>>6&1 != 0 {
+		h = fnvVbeStr(h, r)
+	}
+	if fl>>5&1 != 0 {
+		h = fnvI32(h, r.VbeS())
+	}
+	if r.err != nil {
+		return 0, false
+	}
+	return h, true
+}
+
+// wayFingerprint hashes a single way record from r. Tags from r are remapped
+// through tagMap (nil = identity). Returns (hash, true) or (0, false) on error.
+func wayFingerprint(r *raw_reader, tagMap []uint32) (uint64, bool) {
+	sz := r.VbeU()
+	if r.err != nil {
+		return 0, false
+	}
+	start := len(r.buf)
+	bitmap := r.uint16()
+	sp := r.uint8()
+	layer := sp >> 4
+	numTag := int(sp & 0xf)
+	var tags [16]uint32
+	for ti := 0; ti < numTag; ti++ {
+		t := r.VbeU()
+		if r.err != nil {
+			return 0, false
+		}
+		if tagMap != nil {
+			if int(t) >= len(tagMap) || tagMap[t] == tagNotFound {
+				return 0, false
+			}
+			tags[ti] = tagMap[t]
+		} else {
+			tags[ti] = t
+		}
+	}
+	insertionSortU32(tags[:numTag])
+	fl := r.uint8()
+	if r.err != nil {
+		return 0, false
+	}
+	h := fnvOffset64
+	h = fnvU16(h, bitmap)
+	h = fnvByte(h, layer)
+	h = fnvByte(h, byte(numTag))
+	for ti := 0; ti < numTag; ti++ {
+		h = fnvU32(h, tags[ti])
+	}
+	h = fnvByte(h, fl)
+	if fl>>7&1 != 0 {
+		h = fnvVbeStr(h, r)
+	}
+	if fl>>6&1 != 0 {
+		h = fnvVbeStr(h, r)
+	}
+	if fl>>5&1 != 0 {
+		h = fnvVbeStr(h, r)
+	}
+	if fl>>4&1 != 0 {
+		h = fnvI32(h, r.VbeS())
+		h = fnvI32(h, r.VbeS())
+	}
+	if r.err != nil {
+		return 0, false
+	}
+	consumed := start - len(r.buf)
+	blockLen := int(sz) - consumed
+	if blockLen < 0 || len(r.buf) < blockLen {
+		return 0, false
+	}
+	// Use hardware-accelerated hash (AES-NI) for potentially large block bytes.
+	blockHash := maphash.Bytes(fingerprintSeed, r.buf[:blockLen])
+	h = fnvU32(fnvU32(h, uint32(blockHash)), uint32(blockHash>>32))
+	r.buf = r.buf[blockLen:]
+	return h, true
+}
+
+// streamTilesEqualOrderAgnostic computes per-zoom FNV-1a fingerprint sums for
+// POIs and ways in b1 (remapped through poiMap/wayMap) and b2 (identity), then
+// compares the sums. Order-agnostic: elements may appear in any order.
+// False positives possible (hash collision) but astronomically unlikely.
+func streamTilesEqualOrderAgnostic(b1, b2 []byte, poiMap, wayMap []uint32, h1 *Header, zic *ZoomIntervalConfig) bool {
+	if h1.has_debug {
+		return false
+	}
+	r1 := newRawReader(b1)
+	r2 := newRawReader(b2)
+	zooms := int(zic.max_zoom_level-zic.min_zoom_level) + 1
+
+	var numPOIs [256]uint32
+	var numWays [256]uint32
+	for zi := 0; zi < zooms; zi++ {
+		numPOIs[zi] = r1.VbeU()
+		n2 := r2.VbeU()
+		if numPOIs[zi] != n2 {
+			return false
+		}
+		numWays[zi] = r1.VbeU()
+		n2 = r2.VbeU()
+		if numWays[zi] != n2 {
+			return false
+		}
+	}
+	r1.VbeU() // first_way_offset — may differ; skip
+	r2.VbeU()
+	if r1.err != nil || r2.err != nil {
+		return false
+	}
+
+	var sumPOI1, sumPOI2 [256]uint64
+	for zi := 0; zi < zooms; zi++ {
+		for range numPOIs[zi] {
+			fp, ok := poiFingerprint(r1, poiMap)
+			if !ok {
+				return false
+			}
+			sumPOI1[zi] += fp
+			fp, ok = poiFingerprint(r2, nil)
+			if !ok {
+				return false
+			}
+			sumPOI2[zi] += fp
+		}
+	}
+	var sumWay1, sumWay2 [256]uint64
+	for zi := 0; zi < zooms; zi++ {
+		for range numWays[zi] {
+			fp, ok := wayFingerprint(r1, wayMap)
+			if !ok {
+				return false
+			}
+			sumWay1[zi] += fp
+			fp, ok = wayFingerprint(r2, nil)
+			if !ok {
+				return false
+			}
+			sumWay2[zi] += fp
+		}
+	}
+	if r1.err != nil || r2.err != nil {
+		return false
+	}
+	for zi := 0; zi < zooms; zi++ {
+		if sumPOI1[zi] != sumPOI2[zi] || sumWay1[zi] != sumWay2[zi] {
+			return false
+		}
+	}
+	return true
+}
+
 // wayLessLight compares two WayProperties without decoded block coordinates.
 // Uses num_way_block and encodedBlocks bytes in place of the block[] slice.
 func wayLessLight(a, b *WayProperties) bool {
@@ -589,10 +820,18 @@ func CmdDiff(args []string, flagDetail bool, ignoreComment, ignoreTimestamp bool
 					continue
 				}
 
-				// Proposal 2: streaming comparison (handles tag renumbering and arbitrary
-				// tag ordering within elements, zero allocations).
+				// Streaming comparison: handles tag renumbering and arbitrary tag ordering
+				// within elements, same element order required. Zero allocations.
 				if b1 != nil && b2 != nil && sameZoomRange &&
 					streamTilesEqualUnordered(b1, b2, poi_direct, way_direct, &ps[0].data.header, zic2) {
+					continue
+				}
+
+				// Proposal 2: order-agnostic fingerprint comparison. Handles elements in
+				// different order between files (e.g. merge reorders ways). Much cheaper
+				// than tilesEqualLight (no Light parse, no sort, no allocations).
+				if b1 != nil && b2 != nil && sameZoomRange &&
+					streamTilesEqualOrderAgnostic(b1, b2, poi_direct, way_direct, &ps[0].data.header, zic2) {
 					continue
 				}
 
