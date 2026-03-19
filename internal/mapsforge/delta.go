@@ -34,7 +34,7 @@ type mfdFile struct {
 type mfdTileKey struct{ si, x, y int }
 
 // CmdDelta generates a binary delta (MFD) between old and new maps.
-func CmdDelta(oldPath, newPath, outputPath string, force bool) error {
+func CmdDelta(oldPath, newPath, outputPath string, force, semantic bool) error {
 	if !force {
 		if _, err := os.Stat(outputPath); err == nil {
 			return fmt.Errorf("output file %s already exists (use -f to overwrite)", outputPath)
@@ -58,7 +58,17 @@ func CmdDelta(oldPath, newPath, outputPath string, force bool) error {
 	}
 	defer p2.Close()
 
-	return writeMFD(p1, p2, outputPath)
+	if err := writeMFD(p1, p2, outputPath); err != nil {
+		return err
+	}
+	if semantic {
+		h, err := SemanticHash(newPath, false, false)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("SEMANTIC_HASH: %s\n", h)
+	}
+	return nil
 }
 
 func writeMFD(p1, p2 *MapsforgeParser, outputPath string) error {

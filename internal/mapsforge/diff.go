@@ -414,15 +414,31 @@ const (
 	fnvPrime64  uint64 = 1099511628211
 )
 
-func fnvByte(h uint64, b byte) uint64   { return (h ^ uint64(b)) * fnvPrime64 }
-func fnvU32(h uint64, v uint32) uint64  { return fnvByte(fnvByte(fnvByte(fnvByte(h, byte(v)), byte(v>>8)), byte(v>>16)), byte(v>>24)) }
-func fnvI32(h uint64, v int32) uint64   { return fnvU32(h, uint32(v)) }
-func fnvU16(h uint64, v uint16) uint64  { return fnvByte(fnvByte(h, byte(v)), byte(v>>8)) }
+func fnvByte(h uint64, b byte) uint64 { return (h ^ uint64(b)) * fnvPrime64 }
+func fnvU32(h uint64, v uint32) uint64 {
+	return fnvByte(fnvByte(fnvByte(fnvByte(h, byte(v)), byte(v>>8)), byte(v>>16)), byte(v>>24))
+}
+func fnvI32(h uint64, v int32) uint64  { return fnvU32(h, uint32(v)) }
+func fnvU16(h uint64, v uint16) uint64 { return fnvByte(fnvByte(h, byte(v)), byte(v>>8)) }
 func fnvSlice(h uint64, b []byte) uint64 {
 	for _, c := range b {
 		h = fnvByte(h, c)
 	}
 	return h
+}
+
+// fnvSlice8 hashes b into h by consuming 8 bytes per iteration instead of 1.
+// Each 8-byte chunk is XOR'd into h then multiplied by fnvPrime64 — same
+// mixing step as FNV-1a but at 8× the throughput. Tail bytes fall through to
+// fnvSlice. Produces a full 64-bit result (unlike CRC32's 32 bits).
+func fnvSlice8(h uint64, b []byte) uint64 {
+	for len(b) >= 8 {
+		h ^= uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 |
+			uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
+		h *= fnvPrime64
+		b = b[8:]
+	}
+	return fnvSlice(h, b)
 }
 
 // fnvVbeStr reads a length-prefixed string from r and folds it into h.
@@ -435,7 +451,7 @@ func fnvVbeStr(h uint64, r *raw_reader) uint64 {
 		return h
 	}
 	h = fnvU32(h, n)
-	h = fnvSlice(h, r.buf[:n])
+	h = fnvSlice8(h, r.buf[:n])
 	r.buf = r.buf[n:]
 	return h
 }

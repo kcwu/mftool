@@ -10,13 +10,15 @@ import (
 )
 
 var (
-	flagDeltaOutput string
-	flagDeltaForce  bool
+	flagDeltaOutput   string
+	flagDeltaForce    bool
+	flagDeltaSemantic bool
 )
 
 func init() {
 	deltaCmd.Flags().StringVarP(&flagDeltaOutput, "output", "o", "", "output delta file (required)")
 	deltaCmd.Flags().BoolVarP(&flagDeltaForce, "force", "f", false, "overwrite output file if it exists")
+	deltaCmd.Flags().BoolVar(&flagDeltaSemantic, "semantic", false, "print semantic hash of the final map")
 	deltaCmd.MarkFlagRequired("output")
 	RootCmd.AddCommand(deltaCmd)
 }
@@ -31,6 +33,6 @@ var deltaCmd = &cobra.Command{
 				return fmt.Errorf("output file %s already exists (use -f to overwrite)", flagDeltaOutput)
 			}
 		}
-		return mapsforge.CmdDelta(args[0], args[1], flagDeltaOutput, flagDeltaForce)
+		return mapsforge.CmdDelta(args[0], args[1], flagDeltaOutput, flagDeltaForce, flagDeltaSemantic)
 	},
 }

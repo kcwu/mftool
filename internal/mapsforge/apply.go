@@ -11,7 +11,7 @@ import (
 )
 
 // CmdApply applies one or more MFD delta files to a base map to produce an output map.
-func CmdApply(basePath string, deltaFiles []string, outputPath string, force bool) error {
+func CmdApply(basePath string, deltaFiles []string, outputPath string, force, semantic bool) error {
 	if !force {
 		if _, err := os.Stat(outputPath); err == nil {
 			return fmt.Errorf("output file %s already exists (use -f to overwrite)", outputPath)
@@ -40,7 +40,17 @@ func CmdApply(basePath string, deltaFiles []string, outputPath string, force boo
 	}
 
 	outHeader := deltas[len(deltas)-1].header
-	return applyDeltas(base, deltas, &outHeader, outputPath)
+	if err := applyDeltas(base, deltas, &outHeader, outputPath); err != nil {
+		return err
+	}
+	if semantic {
+		h, err := SemanticHash(outputPath, false, false)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("SEMANTIC_HASH: %s\n", h)
+	}
+	return nil
 }
 
 // loadMFD reads and parses an MFD file (mfd\x05 format).

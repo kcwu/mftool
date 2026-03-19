@@ -10,13 +10,15 @@ import (
 )
 
 var (
-	flagApplyOutput string
-	flagApplyForce  bool
+	flagApplyOutput   string
+	flagApplyForce    bool
+	flagApplySemantic bool
 )
 
 func init() {
 	applyCmd.Flags().StringVarP(&flagApplyOutput, "output", "o", "", "output map file (required)")
 	applyCmd.Flags().BoolVarP(&flagApplyForce, "force", "f", false, "overwrite output file if it exists")
+	applyCmd.Flags().BoolVar(&flagApplySemantic, "semantic", false, "print semantic hash of the output map")
 	applyCmd.MarkFlagRequired("output")
 	RootCmd.AddCommand(applyCmd)
 }
@@ -33,6 +35,6 @@ var applyCmd = &cobra.Command{
 		}
 		basePath := args[0]
 		deltaFiles := args[1:]
-		return mapsforge.CmdApply(basePath, deltaFiles, flagApplyOutput, flagApplyForce)
+		return mapsforge.CmdApply(basePath, deltaFiles, flagApplyOutput, flagApplyForce, flagApplySemantic)
 	},
 }
